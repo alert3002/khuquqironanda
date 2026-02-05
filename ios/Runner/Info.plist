@@ -24,16 +24,11 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>UIDeviceFamily</key>
-	<array>
-		<integer>1</integer>
-	</array>
-	<key>UIRequiresFullScreen</key>
-	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
@@ -43,12 +38,11 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-    <key>NSMicrophoneUsageDescription</key>
-<string>Ин барнома барои сабти овоз ё функсияҳои аудиоӣ ба дастрасӣ ба микрофон ниёз дорад.</string>
-
-<key>UIRequiresFullScreen</key>
-<true/>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>Дастрасӣ барои хондани файлҳои китоб ва ҳуҷҷатҳо лозим аст.</string>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Дастрасӣ барои хондани файлҳои китоб ва ҳуҷҷатҳо лозим аст.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ин барнома барои функсияҳои аудиоӣ ба дастрасӣ ба микрофон ниёз дорад.</string>
 </dict>
 </plist>
