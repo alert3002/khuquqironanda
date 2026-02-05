@@ -44,7 +44,11 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-    
+    <key>NSMicrophoneUsageDescription</key>
+<string>Ин барнома барои сабти овоз ё функсияҳои аудиоӣ ба дастрасӣ ба микрофон ниёз дорад.</string>
+
+<key>UIRequiresFullScreen</key>
+<true/>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Дастрасӣ барои хондани файлҳои китоб ва ҳуҷҷатҳо лозим аст.</string>
 </dict>
