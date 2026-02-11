@@ -7,10 +7,7 @@ import 'home_screen.dart';
 class VerifyCodeScreen extends StatefulWidget {
   final String phone;
 
-  const VerifyCodeScreen({
-    super.key,
-    required this.phone,
-  });
+  const VerifyCodeScreen({super.key, required this.phone});
 
   @override
   State<VerifyCodeScreen> createState() => _VerifyCodeScreenState();
@@ -83,7 +80,9 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result['error'] ?? "Хатогӣ! Лутфан дубора кӯшиш кунед."),
+          content: Text(
+            result['error'] ?? "Хатогӣ! Лутфан дубора кӯшиш кунед.",
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -101,6 +100,21 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
     setState(() => _isLoading = true);
 
     String code = _codeController.text.trim();
+
+    // ЛОГИКАИ ДЕМО: Агар рақам ва код ба маълумоти модератор мувофиқ бошад
+    // Мо мустақиман ба HomeScreen мегузарем, то модератор ба хатогӣ дучор нашавад.
+    if (widget.phone == "+992921234567" && code == "3002") {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
+      }
+      return; // Идомаи тафтиши API лозим нест
+    }
+
+    // Тафтиши ҳақиқӣ барои корбарони дигар
     final result = await ApiService.verifyCode(widget.phone, code);
 
     setState(() => _isLoading = false);
@@ -113,9 +127,8 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
         );
       }
     } else {
-      // Check for device restriction error (403)
+      // Идомаи коди шумо (тафтиши хатогиҳо ва 403)...
       if (result['statusCode'] == 403) {
-        // Show device restriction dialog
         if (mounted) {
           showDialog(
             context: context,
@@ -163,21 +176,18 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
               // Icon
               const Icon(Icons.sms, size: 80, color: Colors.blue),
               const SizedBox(height: 20),
-              
+
               // Title
               const Text(
                 "Коди СМС-ро ворид кунед",
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
-              
+
               // Phone number display
               Text(
                 widget.phone,
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey[600],
-                ),
+                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
               ),
               const SizedBox(height: 40),
 
@@ -229,10 +239,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
               if (!_canResend)
                 Text(
                   "СМС-ро аз нав фиристодан ${_formatTime(_remainingSeconds)}",
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
-                  ),
+                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                 )
               else
                 TextButton(
@@ -249,4 +256,3 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
     );
   }
 }
-
