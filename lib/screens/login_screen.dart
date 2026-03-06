@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../api/api_service.dart';
 import 'verify_code_screen.dart';
+import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,6 +16,17 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _phoneController = TextEditingController();
 
   bool _isLoading = false; // Оё ҳозир боргирӣ рафта истодааст?
+
+  void _onContinueAsGuest() {
+    var box = Hive.box('settings');
+    box.put('is_guest', true);
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
+      );
+    }
+  }
 
   // Функсия барои тугмаи "Ирсоли СМС"
   void _onSendPressed() async {
@@ -141,6 +154,18 @@ class _LoginScreenState extends State<LoginScreen> {
                           "Ирсоли СМС",
                           style: TextStyle(fontSize: 18),
                         ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: TextButton(
+                  onPressed: _isLoading ? null : _onContinueAsGuest,
+                  child: const Text(
+                    "Ҳамчун меҳмон идома диҳед",
+                    style: TextStyle(fontSize: 16),
+                  ),
                 ),
               ),
             ],

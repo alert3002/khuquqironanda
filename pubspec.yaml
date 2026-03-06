@@ -1,7 +1,7 @@
 name: app
 description: "A new Flutter project."
 publish_to: 'none' 
-version: 1.0.2+3
+version: 2.0.3+20
 
 environment:
   sdk: ^3.10.1
@@ -42,6 +42,7 @@ flutter:
   uses-material-design: true
   assets:
     - img/
+    - assets/
 
 flutter_launcher_icons:
   android: true

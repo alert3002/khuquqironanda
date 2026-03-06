@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 
 // Security Service - барои идоракунии ҳимояи экран
@@ -15,9 +14,8 @@ class SecurityService {
       await box.put(_securityEnabledKey, enabled);
       print("✅ Screen security ${enabled ? 'enabled' : 'disabled'}");
       
-      // NOTE: Барои тағйир додани FLAG_SECURE дар вақти иҷро,
-      // бояд Method Channel бо MainActivity.kt истифода карда шавад.
-      // Ҳоло, FLAG_SECURE дар MainActivity.kt фаъол аст.
+      // NOTE: Агар баъдтар хоҳед ҳимояро фаъол/хомӯш кунед,
+      // беҳтарин роҳ Method Channel бо MainActivity.kt мебошад.
     } catch (e) {
       print("❌ Error setting security: $e");
     }
@@ -44,50 +42,24 @@ void main() async {
   await Hive.openBox('cache'); // Барои сабти Raw JSON (Forever Offline)
   
   // 2. Хомӯш кардани ҳимояи экран (Allow screenshots)
-  SecurityService.enableScreenSecurity(enabled: false);
+  await SecurityService.enableScreenSecurity(enabled: false);
+
+  // 3. Агар токен набошад, барнома ҳамчун "меҳмон" кушода мешавад,
+  // то Play Console онро "холӣ" ҳисоб накунад.
+  try {
+    final box = Hive.box('settings');
+    final token = box.get('token');
+    final isGuest = box.get('is_guest', defaultValue: false) == true;
+    if (token == null && !isGuest) {
+      await box.put('is_guest', true);
+    }
+  } catch (_) {}
 
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
-  // Санҷидани, оё корбар дар 10 рӯзи охир ворид шудааст
-  static bool _isLoginValid() {
-    try {
-      var box = Hive.box('settings');
-      String? token = box.get('token');
-      String? loginDateStr = box.get('login_date');
-      
-      if (token == null || loginDateStr == null) {
-        return false;
-      }
-      
-      try {
-        final loginDate = DateTime.parse(loginDateStr);
-        final now = DateTime.now();
-        final difference = now.difference(loginDate).inDays;
-        
-        // Агар аз 10 рӯз зиёдтар гузашта бошад, токенро нест мекунем
-        if (difference > 10) {
-          box.delete('token');
-          box.delete('login_date');
-          box.delete('phone');
-          print("⚠️ Login expired (${difference} days old). Token cleared.");
-          return false;
-        }
-        
-        print("✅ Login valid (${difference} days old)");
-        return true;
-      } catch (e) {
-        print("❌ Error parsing login date: $e");
-        return false;
-      }
-    } catch (e) {
-      print("❌ Error checking login: $e");
-      return false;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -127,8 +99,8 @@ class MyApp extends StatelessWidget {
         Locale('ru'),
         Locale('tg'), // Tajik
       ],
-      // Санҷидани, оё корбар аллакай ворид шудааст
-      home: _isLoginValid() ? const HomeScreen() : const LoginScreen(),
+      // Ҳамеша Home кушода мешавад; воридшавӣ аз Профил дастрас аст.
+      home: const HomeScreen(),
     );
   }
 }

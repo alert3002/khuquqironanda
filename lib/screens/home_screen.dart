@@ -1,13 +1,17 @@
+import 'dart:io' show Platform;
+
 import 'package:app/screens/balance_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api/api_service.dart';
 import '../models/book_model.dart';
 import '../models/subscription_plan_model.dart';
 import '../models/user_model.dart';
 import 'about_screen.dart';
 import 'book_reader_screen.dart';
+import 'login_screen.dart';
 import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -17,15 +21,72 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+// Dashboard theme
+class _DashboardTheme {
+  static const Color primary = Color(0xFF0D47A1);
+  static const Color primaryLight = Color(0xFF1565C0);
+  static const Color accent = Color(0xFF00897B);
+  static const Color surface = Color(0xFFF5F7FA);
+  static const Color cardBg = Colors.white;
+  static const double cardRadius = 16.0;
+}
+
 class _HomeScreenState extends State<HomeScreen> {
   Book? _book;
   bool _isLoading = true;
   bool _isPurchasing = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _openTelegramContact() async {
+    final uri = Uri.parse('https://t.me/group1week');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Telegram кушода нашуд.")),
+        );
+      }
+    }
+  }
+
+  void _showIOSContactAdminDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Обуна ва бобҳои иловагӣ"),
+        content: const Text(
+          "Дар версияи iOS пардохтҳо дар дохили барнома ғайрифаъоланд.\n\n"
+          "Барои пайваст кардани бобҳои иловагӣ ё гирифтани дастрасии пурра, "
+          "лутфан ба администратор дар Telegram муроҷиат намоед.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Бекор"),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _openTelegramContact();
+            },
+            icon: const Icon(Icons.send),
+            label: const Text("Telegram"),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadData() async {
@@ -68,8 +129,58 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadData();
   }
 
+  bool get _isGuest {
+    try {
+      return Hive.box('settings').get('is_guest', defaultValue: false) == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _showSignInRequiredDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Воридшавӣ зарур аст"),
+        content: const Text(
+          "Барои дастрасӣ ба мундариҷаи пулакӣ лутфан ба система ворид шавед.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Бекор"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              Hive.box('settings').delete('is_guest');
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+                (route) => false,
+              );
+            },
+            child: const Text("Ворид шудан"),
+          ),
+        ],
+      ),
+    );
+  }
+
   // Нишон додани нақшаҳои обуна
   void _showSubscriptionPlans() async {
+    if (Platform.isIOS) {
+      _showIOSContactAdminDialog();
+      return;
+    }
+    if (_isGuest) {
+      _showSignInRequiredDialog();
+      return;
+    }
     if (_book == null || _book!.plans.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -113,12 +224,24 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _buyBook() {
+    if (Platform.isIOS) {
+      _showIOSContactAdminDialog();
+      return;
+    }
     _showSubscriptionOptions();
   }
 
   // Иҷрои хариди обуна
   Future<void> _processSubscription(int planId) async {
+    if (Platform.isIOS) {
+      _showIOSContactAdminDialog();
+      return;
+    }
     if (_book == null) return;
+    if (_isGuest) {
+      _showSignInRequiredDialog();
+      return;
+    }
 
     // Гирифтани баланси корбар
     User? user;
@@ -138,12 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (user == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Лутфан ба система ворид шавед"),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showSignInRequiredDialog();
       }
       return;
     }
@@ -306,12 +424,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  List<Chapter> get _sortedChapters {
+    if (_book == null) return [];
+    final list = List<Chapter>.from(_book!.chapters)
+      ..sort((a, b) => a.order.compareTo(b.order));
+    return list;
+  }
 
+  List<Chapter> get _filteredChapters {
+    if (_searchQuery.trim().isEmpty) return _sortedChapters;
+    final q = _searchQuery.trim().toLowerCase();
+    return _sortedChapters.where((c) => c.title.toLowerCase().contains(q)).toList();
+  }
+
+  int get _accessibleChaptersCount =>
+      _sortedChapters.where((c) => c.isFree || c.isPurchased).length;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        backgroundColor: Colors.grey[100],
+        backgroundColor: _DashboardTheme.surface,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(60.0),
           child: AppBar(
@@ -352,12 +484,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.refresh, color: Colors.blue, size: 28),
+                icon: const Icon(Icons.refresh_rounded, color: _DashboardTheme.primary, size: 26),
                 onPressed: _refreshBook,
                 tooltip: "Навсозӣ",
               ),
               IconButton(
-                icon: const Icon(Icons.info_outline, color: Colors.blue, size: 28),
+                icon: const Icon(Icons.info_outline_rounded, color: _DashboardTheme.primary, size: 26),
                 onPressed: () {
                   Navigator.push(
                     context,
@@ -366,7 +498,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
               IconButton(
-                icon: const Icon(Icons.person, color: Colors.blue, size: 28),
+                icon: const Icon(Icons.person_rounded, color: _DashboardTheme.primary, size: 26),
                 onPressed: () {
                   Navigator.push(
                     context,
@@ -381,258 +513,564 @@ class _HomeScreenState extends State<HomeScreen> {
         body: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : _book == null
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.error_outline, size: 64, color: Colors.grey),
-                        const SizedBox(height: 16),
-                        const Text(
-                          "Китоб ёфт нашуд",
-                          style: TextStyle(fontSize: 18, color: Colors.grey),
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: _loadData,
-                          child: const Text("Аз нав кӯшиш кардан"),
-                        ),
-                      ],
-                    ),
-                  )
+                ? _buildErrorState()
                 : RefreshIndicator(
                     onRefresh: _refreshBook,
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Large Book Cover and Description
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            color: Colors.white,
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Large Book Cover
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: CachedNetworkImage(
-                                    imageUrl: ApiService.fixImageUrl(_book!.coverImage),
-                                    width: 180,
-                                    height: 250,
-                                    fit: BoxFit.cover,
-                                    placeholder: (context, url) => Container(
-                                      width: 180,
-                                      height: 250,
-                                      color: Colors.grey[300],
-                                      child: const Center(child: CircularProgressIndicator()),
-                                    ),
-                                    errorWidget: (context, url, error) => Container(
-                                      width: 180,
-                                      height: 250,
-                                      color: Colors.grey[300],
-                                      child: const Icon(Icons.book, size: 50),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                // Description and Buy Button
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      // Description
-                                      if (_book!.description.isNotEmpty)
-                                        Text(
-                                          _book!.description,
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            height: 1.5,
-                                            color: Colors.black87,
-                                          ),
-                                        ),
-                                      const SizedBox(height: 12),
-                                      // Subscription Button or Active Status
-                                      if (_book!.isPurchased && _book!.expiresAt != null)
-                                        Container(
-                                          padding: const EdgeInsets.all(16),
-                                          decoration: BoxDecoration(
-                                            color: Colors.cyan.withOpacity(0.1),
-                                            borderRadius: BorderRadius.circular(12),
-                                            border: Border.all(color: Colors.cyan, width: 2),
-                                          ),
-                                          child: Column(
-                                            children: [
-                                              Row(
-                                                mainAxisAlignment: MainAxisAlignment.center,
-                                                children: [
-                                                  Icon(Icons.check_circle, color: Colors.cyan[700], size: 24),
-                                                  const SizedBox(width: 8),
-                                                  const Text(
-                                                    "Обуна фаъол \n аст ✅",
-                                                    textAlign: TextAlign.center,
-                                                    style: TextStyle(
-                                                      color: Colors.cyan,
-                                                      fontSize: 12,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 8),
-                                              Text(
-                                                "Фаъол то: ${DateFormat('dd.MM.yyyy').format(_book!.expiresAt!)}",
-                                                style: TextStyle(
-                                                  color: Colors.cyan[700],
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        )
-                                      else
-                                        SizedBox(
-                                          width: double.infinity,
-                                          child: ElevatedButton(
-                                            onPressed: _isPurchasing ? null : _showSubscriptionPlans,
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.cyan.shade300,
-                                              padding: const EdgeInsets.symmetric(vertical: 12),
-                                            ),
-                                            child: _isPurchasing
-                                                ? const SizedBox(
-                                                    height: 20,
-                                                    width: 20,
-                                                    child: CircularProgressIndicator(
-                                                      color: Colors.white,
-                                                      strokeWidth: 2,
-                                                    ),
-                                                  )
-                                                : const Text(
-                                                    "Обуна шудан",
-                                                    style: TextStyle(
-                                                      fontSize: 16,
-                                                      fontWeight: FontWeight.bold,
-                                                      color: Colors.white,
-                                                    ),
-                                                  ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          // Chapters List Header
-                          
-                          // Chapters List
-                          Builder(
-                            builder: (context) {
-                              // Sort chapters by order
-                              final sortedChapters = List<Chapter>.from(_book!.chapters)
-                                ..sort((a, b) => a.order.compareTo(b.order));
-                              
-                              return ListView.builder(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                itemCount: sortedChapters.length,
-                                itemBuilder: (context, index) {
-                                  final chapter = sortedChapters[index];
-                                  final isAccessible = chapter.isFree || chapter.isPurchased;
-                              
-                              // Format: "Боб X: Title" where X is the chapter order
-                              final chapterTitle = "${chapter.title}";
-
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 1),
-                                color: Colors.white,
-                                child: ListTile(
-                                  title: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          chapterTitle,
-                                          style: TextStyle(
-                                            color: isAccessible ? Colors.black : Colors.grey,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ),
-                                      if (chapter.isPremium)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 6,
-                                            vertical: 2,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: Colors.yellow[700],
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          child: const Text(
-                                            "PRO",
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                  leading: Icon(
-                                    isAccessible ? Icons.lock_open : Icons.lock,
-                                    color: isAccessible ? Colors.green : Colors.red,
-                                  ),
-                                  trailing: const Icon(
-                                    Icons.arrow_forward_ios,
-                                    size: 14,
-                                    color: Colors.grey,
-                                  ),
-                                  onTap: () {
-                                    if (isAccessible) {
-                                      _openReader(chapterId: chapter.id);
-                                    } else if (chapter.isPremium) {
-                                      showDialog(
-                                        context: context,
-                                        builder: (context) => AlertDialog(
-                                          title: const Text("Боби PRO"),
-                                          content: const Text(
-                                            "Ин боб танҳо дар тарифҳои PRO (180 ё 365 рӯз) дастрас аст. "
-                                            "Лутфан тарифи худро иваз кунед.",
-                                          ),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () => Navigator.pop(context),
-                                              child: const Text("Бекор"),
-                                            ),
-                                            ElevatedButton(
-                                              onPressed: () {
-                                                Navigator.pop(context);
-                                                _buyBook();
-                                              },
-                                              child: const Text("Иваз кардан"),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    } else {
-                                      _buyBook();
-                                    }
-                                  },
-                                ),
-                              );
-                                },
-                              );
-                            },
-                          ),
+                          _buildProgressTracker(),
                           const SizedBox(height: 20),
+                          _buildQuickSearch(),
+                          const SizedBox(height: 24),
+                          _buildSectionTitle('Категорияҳо'),
+                          const SizedBox(height: 12),
+                          _buildCategoryCards(),
+                          const SizedBox(height: 24),
+                          _buildSectionTitle('Қонунҳои назариявӣ'),
+                          const SizedBox(height: 12),
+                          _buildSubscriptionBanner(),
+                          const SizedBox(height: 16),
+                          _buildChaptersList(),
+                          const SizedBox(height: 24),
                         ],
                       ),
                     ),
                   ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            const Text(
+              "Китоб ёфт нашуд",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 18, color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _loadData,
+              icon: const Icon(Icons.refresh),
+              label: const Text("Аз нав кӯшиш кардан"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _DashboardTheme.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProgressTracker() {
+    final total = _sortedChapters.length;
+    final accessible = _accessibleChaptersCount;
+    final progress = total > 0 ? accessible / total : 0.0;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [_DashboardTheme.primary, _DashboardTheme.primaryLight],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+        boxShadow: [
+          BoxShadow(
+            color: _DashboardTheme.primary.withOpacity(0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.trending_up, color: Colors.white, size: 28),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Text(
+                  "Пайиравии пешравӣ",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            "Дастрас: $accessible аз $total боб",
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.95),
+              fontSize: 15,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              backgroundColor: Colors.white.withOpacity(0.3),
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          ),
+          if (_book!.isPurchased && _book!.expiresAt != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              "Обуна фаъол то ${DateFormat('dd.MM.yyyy').format(_book!.expiresAt!)}",
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.9),
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickSearch() {
+    return Container(
+      decoration: BoxDecoration(
+        color: _DashboardTheme.cardBg,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: _searchController,
+        onChanged: (v) => setState(() => _searchQuery = v),
+        decoration: InputDecoration(
+          hintText: "Ҷустуҷӯи мақолаҳо дар қонунҳо...",
+          prefixIcon: const Icon(Icons.search_rounded, color: _DashboardTheme.primary),
+          border: InputBorder.none,
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: _DashboardTheme.primary, width: 1.5),
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Text(
+      title,
+      style: const TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.bold,
+        color: Color(0xFF1A237E),
+      ),
+    );
+  }
+
+  Widget _buildCategoryCards() {
+    return Row(
+      children: [
+        Expanded(
+          child: _CategoryCard(
+            icon: Icons.gavel_rounded,
+            title: "Қонунҳои назариявӣ",
+            subtitle: "${_sortedChapters.length} боб",
+            color: const Color(0xFF1565C0),
+            onTap: () {},
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _CategoryCard(
+            icon: Icons.quiz_rounded,
+            title: "Тестҳои амалӣ",
+            subtitle: "Ба зудӣ",
+            color: const Color(0xFF00897B),
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Ба зудӣ дастрас мешавад.")),
+              );
+            },
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _CategoryCard(
+            icon: Icons.traffic_rounded,
+            title: "Аломатҳо",
+            subtitle: "Китобхона",
+            color: const Color(0xFF6A1B9A),
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Ба зудӣ дастрас мешавад.")),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSubscriptionBanner() {
+    if (_book!.isPurchased && _book!.expiresAt != null) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _DashboardTheme.accent.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+          border: Border.all(color: _DashboardTheme.accent.withOpacity(0.4)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle_rounded, color: _DashboardTheme.accent, size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                "Обуна фаъол то ${DateFormat('dd.MM.yyyy').format(_book!.expiresAt!)}",
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF004D40),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _isPurchasing
+            ? null
+            : () {
+                if (Platform.isIOS) {
+                  _showIOSContactAdminDialog();
+                } else {
+                  _showSubscriptionPlans();
+                }
+              },
+        borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: _DashboardTheme.primary.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+            border: Border.all(color: _DashboardTheme.primary.withOpacity(0.3)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _DashboardTheme.primary.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.workspace_premium_rounded, color: _DashboardTheme.primary, size: 32),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Дастрасии пурра",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: _DashboardTheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "Обуна шавед барои ҳамаи мундариҷа",
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _isPurchasing
+                  ? const SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.arrow_forward_ios, size: 18, color: _DashboardTheme.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChaptersList() {
+    final chapters = _filteredChapters;
+    if (chapters.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Column(
+            children: [
+              Icon(Icons.search_off_rounded, size: 48, color: Colors.grey[400]),
+              const SizedBox(height: 12),
+              Text(
+                _searchQuery.isEmpty ? "Бобҳо ёфт нашуд" : "Ҷустуҷӯӣ натиҷа надод",
+                style: TextStyle(fontSize: 15, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: chapters.length,
+      itemBuilder: (context, index) {
+        final chapter = chapters[index];
+        return _ChapterCard(
+          chapter: chapter,
+          onTap: () => _onChapterTap(chapter),
+        );
+      },
+    );
+  }
+
+  void _onChapterTap(Chapter chapter) {
+    final isAccessible = chapter.isFree || chapter.isPurchased;
+    if (isAccessible) {
+      _openReader(chapterId: chapter.id);
+    } else if (chapter.isPremium) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Боби PRO"),
+          content: const Text(
+            "Ин боб танҳо дар тарифҳои PRO дастрас аст. Лутфан обуна гиред.",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Бекор"),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _DashboardTheme.primary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                _buyBook();
+              },
+              child: const Text("Обуна"),
+            ),
+          ],
+        ),
+      );
+    } else {
+      _buyBook();
+    }
+  }
+}
+
+class _CategoryCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _CategoryCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _DashboardTheme.cardBg,
+            borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: color, size: 26),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A237E),
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChapterCard extends StatelessWidget {
+  final Chapter chapter;
+  final VoidCallback onTap;
+
+  const _ChapterCard({required this.chapter, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isAccessible = chapter.isFree || chapter.isPurchased;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _DashboardTheme.cardBg,
+              borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isAccessible
+                        ? _DashboardTheme.accent.withOpacity(0.12)
+                        : Colors.grey.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    isAccessible ? Icons.article_rounded : Icons.lock_rounded,
+                    color: isAccessible ? _DashboardTheme.accent : Colors.grey,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        chapter.title,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: isAccessible ? const Color(0xFF1A237E) : Colors.grey,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (chapter.isPremium) ...[
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade700.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            "PRO",
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFFF57F17),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 14,
+                  color: Colors.grey[400],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

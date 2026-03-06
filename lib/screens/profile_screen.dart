@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
@@ -6,6 +8,7 @@ import '../models/user_model.dart';
 import '../utils/formatters.dart';
 import 'login_screen.dart';
 import 'balance_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -37,6 +40,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _lastNameController.dispose();
     _birthDateController.dispose();
     super.dispose();
+  }
+
+  Future<void> _openTelegramContact() async {
+    final uri = Uri.parse('https://t.me/group1week');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Telegram кушода нашуд.")),
+        );
+      }
+    }
+  }
+
+  void _showIOSContactAdminDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Обуна ва пардохт"),
+        content: const Text(
+          "Дар версияи iOS пардохтҳо дар дохили барнома ғайрифаъоланд.\n\n"
+          "Барои пайваст кардани бобҳои иловагӣ ё пур кардани дастрасӣ, "
+          "лутфан ба администратор дар Telegram муроҷиат намоед.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Бекор"),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _openTelegramContact();
+            },
+            icon: const Icon(Icons.send),
+            label: const Text("Telegram"),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadUserProfile() async {
@@ -170,6 +212,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await box.delete('token');
       await box.delete('login_date');
       await box.delete('phone');
+      await box.delete('is_guest');
       
       // Гузариш ба саҳифаи воридшавӣ
       if (mounted) {
@@ -180,6 +223,74 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     }
+  }
+
+  bool get _isGuest {
+    try {
+      return Hive.box('settings').get('is_guest', defaultValue: false) == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Widget _buildGuestOrErrorContent() {
+    if (_isGuest) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.person_outline, size: 64, color: Colors.grey[400]),
+              const SizedBox(height: 16),
+              const Text(
+                "Шумо ҳамчун меҳмон сӯҳбат мекунед",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "Барои таҳрир кардани профил ё дастрасӣ ба мундариҷаи пулакӣ ворид шавед.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Hive.box('settings').delete('is_guest');
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (context) => const LoginScreen()),
+                      (route) => false,
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    "Ворид шудан",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return const Center(
+      child: Text(
+        "Маълумоти корбар ёфт нашуд",
+        style: TextStyle(fontSize: 16, color: Colors.grey),
+      ),
+    );
   }
 
   Future<String> _getDeviceId() async {
@@ -269,12 +380,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _user == null
-              ? const Center(
-                  child: Text(
-                    "Маълумоти корбар ёфт нашуд",
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                )
+              ? _buildGuestOrErrorContent()
               : SingleChildScrollView(
                   child: Padding(
                     padding: const EdgeInsets.all(24.0),
@@ -419,6 +525,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         // Balance (Prominently displayed, Navigable)
                         InkWell(
                           onTap: () {
+                            if (Platform.isIOS) {
+                              _showIOSContactAdminDialog();
+                              return;
+                            }
                             Navigator.push(
                               context,
                               MaterialPageRoute(builder: (context) => const BalanceScreen()),

@@ -3,6 +3,7 @@ import 'dart:io' show Platform; // Барои санҷиши Android/iOS
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import '../models/book_model.dart';
@@ -39,6 +40,28 @@ class ApiService {
     } else {
       return "https://books.1week.tj/api"; // Прод
     }
+  }
+
+  static Future<Book?> _loadBundledSampleBook() async {
+    try {
+      final raw = await rootBundle.loadString('assets/sample_book.json');
+      final data = jsonDecode(raw);
+      if (data is Map<String, dynamic>) {
+        return Book.fromJson(data);
+      }
+      if (data is Map) {
+        return Book.fromJson(Map<String, dynamic>.from(data));
+      }
+    } catch (e) {
+      print("❌ Error loading bundled sample book: $e");
+    }
+    return null;
+  }
+
+  static Future<List<Book>> _fallbackBooks() async {
+    final sample = await _loadBundledSampleBook();
+    if (sample != null) return [sample];
+    return [];
   }
 
   // Функсияи ёрирасон барои сохтани Header (бо Токен)
@@ -319,8 +342,9 @@ class ApiService {
   // Санҷиши пайвастшавӣ ба Интернет
   static Future<bool> _hasInternetConnection() async {
     try {
-      final connectivityResult = await Connectivity().checkConnectivity();
-      return connectivityResult != ConnectivityResult.none;
+      final results = await Connectivity().checkConnectivity();
+      // connectivity_plus v6+ returns List<ConnectivityResult>
+      return results.any((r) => r != ConnectivityResult.none);
     } catch (e) {
       print("❌ Connectivity check error: $e");
       return false;
@@ -483,12 +507,16 @@ class ApiService {
       } else {
         print("⚠️ Books Error: ${response.statusCode}");
         // Агар хатогӣ рух дода бошад, аз кеш мехонем
-        return await _loadBooksFromCacheRaw();
+        final cached = await _loadBooksFromCacheRaw();
+        if (cached.isNotEmpty) return cached;
+        return await _fallbackBooks();
       }
     } catch (e) {
       print("❌ Error getting books: $e");
       // Агар хатогӣ рух дода бошад, аз кеш мехонем
-      return await _loadBooksFromCacheRaw();
+      final cached = await _loadBooksFromCacheRaw();
+      if (cached.isNotEmpty) return cached;
+      return await _fallbackBooks();
     }
   }
 
@@ -514,7 +542,7 @@ class ApiService {
         return targetBook;
       } catch (cacheError) {
         print("❌ Error loading target book from cache: $cacheError");
-        return null;
+        return await _loadBundledSampleBook();
       }
     }
   }

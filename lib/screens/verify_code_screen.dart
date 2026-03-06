@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../api/api_service.dart';
 import 'home_screen.dart';
 
@@ -106,6 +107,8 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
     if (widget.phone == "+992921234567" && code == "3002") {
       setState(() => _isLoading = false);
       if (mounted) {
+        var box = Hive.box('settings');
+        await box.delete('is_guest');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const HomeScreen()),
@@ -121,6 +124,8 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
     if (result['success'] == true) {
       if (mounted) {
+        var box = Hive.box('settings');
+        await box.delete('is_guest');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const HomeScreen()),

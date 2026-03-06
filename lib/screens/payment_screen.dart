@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:webview_flutter/webview_flutter.dart';
 import '../api/api_service.dart';
 import 'payment_webview.dart';
 
@@ -22,8 +20,6 @@ class PaymentScreen extends StatefulWidget {
 }
 
 class _PaymentScreenState extends State<PaymentScreen> {
-  WebViewController? _webViewController;
-  bool _isLoading = true;
   String? _error;
 
   @override
@@ -53,150 +49,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } else {
       setState(() {
         _error = "Хатогӣ дар гирифтани формаи пардохт";
-        _isLoading = false;
       });
     }
   } catch (e) {
     setState(() {
       _error = e.toString();
-      _isLoading = false;
     });
   }
 }
-
-  void _initializeWebView(String htmlForm) {
-    try {
-      // Сохтани WebViewController
-      _webViewController = WebViewController();
-      
-      // setJavaScriptMode танҳо барои платформаҳое, ки онро дастгирӣ мекунанд
-      try {
-        if (!kIsWeb) {
-          _webViewController!.setJavaScriptMode(JavaScriptMode.unrestricted);
-        }
-      } catch (e) {
-        // Агар setJavaScriptMode дастгирӣ нашавад (мас. Windows), онро нодида мегирем
-        print('setJavaScriptMode not supported on this platform: $e');
-      }
-      
-      _webViewController!
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageStarted: (String url) {
-              setState(() {
-                _isLoading = true;
-              });
-            },
-            onPageFinished: (String url) {
-              setState(() {
-                _isLoading = false;
-              });
-              
-              // Санҷиш: Оё ба callback URL гузаронида шудем?
-              if (url.contains('/payment/success/')) {
-                _handlePaymentSuccess();
-              } else if (url.contains('/payment/cancel/')) {
-                _handlePaymentCancel();
-              } else if (url.contains('/payment/decline/')) {
-                _handlePaymentDecline();
-              }
-            },
-            onWebResourceError: (WebResourceError error) {
-              setState(() {
-                _error = 'Хатогии пайвастшавӣ: ${error.description}';
-                _isLoading = false;
-              });
-            },
-          ),
-        )
-        ..loadRequest(
-          Uri.dataFromString(
-            htmlForm,
-            mimeType: 'text/html',
-            encoding: Encoding.getByName('utf-8'),
-          ),
-        );
-
-      setState(() {
-        _error = null;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Хатогӣ ҳангоми омодасозии WebView: $e';
-        _isLoading = false;
-      });
-    }
-  }
-
-  void _handlePaymentSuccess() {
-    // Навсозии баланс
-    if (widget.onPaymentSuccess != null) {
-      widget.onPaymentSuccess!();
-    }
-    
-    // Намоиши пайғоми муваффақият
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Text('Муваффақият'),
-          content: const Text('Пардохт бомуваффақият анҷом шуд!'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Пӯшидани диалог
-                Navigator.of(context).pop(); // Баргаштан ба саҳифаи қаблӣ
-              },
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  void _handlePaymentCancel() {
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Пардохт бекор шуд'),
-          content: const Text('Шумо пардохтро бекор кардед.'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pop();
-              },
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  void _handlePaymentDecline() {
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Пардохт рад шуд'),
-          content: const Text('Пардохт рад карда шуд. Лутфан дубора кӯшиш кунед.'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pop();
-              },
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -246,7 +106,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     onPressed: () {
                       setState(() {
                         _error = null;
-                        _isLoading = true;
                       });
                       _initializePayment();
                     },
@@ -283,29 +142,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     ],
                   ),
                 )
-              : _webViewController != null
-                  ? Stack(
-                      children: [
-                        WebViewWidget(controller: _webViewController!),
-                        if (_isLoading)
-                          Container(
-                            color: Colors.white,
-                            child: const Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  CircularProgressIndicator(),
-                                  SizedBox(height: 16),
-                                  Text('Интизор шавед...'),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
-                    )
-                  : const Center(
-                      child: CircularProgressIndicator(),
-                    ),
+              : const Center(child: CircularProgressIndicator()),
     );
   }
 }
