@@ -310,11 +310,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _handleDeleteAccount() async {
-    // Диалоги тасдиқ
+    // Диалоги тасдиқ (Guideline 5.1.1(v) - account deletion)
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Нест кардани ҳисоб"),
+        title: const Text("Нест кардани ҳисоб (Delete Account)"),
         content: const Text(
           "Шумо мутмаин ҳастед? Ин амал бекор карда намешавад.",
           style: TextStyle(color: Colors.red),
@@ -739,7 +739,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const SizedBox(height: 16),
 
-                        // Delete Account Button
+                        // Delete Account Button (5.1.1(v) - visible for App Review)
                         SizedBox(
                           width: double.infinity,
                           height: 50,
@@ -753,7 +753,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                             child: const Text(
-                              "Нест кардани ҳисоб",
+                              "Нест кардани ҳисоб (Delete Account)",
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
