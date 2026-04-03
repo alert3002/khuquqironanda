@@ -26,9 +26,14 @@ workflows:
         script: |
           cd app
           flutter pub get
-      - name: Build iOS
+      - name: Build iOS (маҷбуран build-number аз pubspec — барои App Store Connect)
         script: |
           cd app
-          flutter build ios --release --no-codesign
+          # Ҳар бор пас аз +30 дар pubspec иваз кунед; ин сатр кӯшиш мекунад IPA ба CFBundleVersion-и нодуруст наафтад
+          FULL=$(grep '^version:' pubspec.yaml | head -1 | awk '{print $2}')
+          NAME=${FULL%+*}
+          NUMBER=${FULL#*+}
+          echo "Using FLUTTER_BUILD_NAME=$NAME FLUTTER_BUILD_NUMBER=$NUMBER"
+          flutter build ipa --release --build-name="$NAME" --build-number="$NUMBER"
     artifacts:
-      - app/build/ios/iphoneos/Runner.app
+      - app/build/ios/ipa/*.ipa
