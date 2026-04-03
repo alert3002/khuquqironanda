@@ -1,0 +1,34 @@
+workflows:
+  android-release:
+    name: Android Release AAB
+    max_build_duration: 60
+    environment:
+      flutter: stable
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          cd app
+          flutter pub get
+      - name: Build Android App Bundle
+        script: |
+          cd app
+          flutter build appbundle --release
+    artifacts:
+      - app/build/app/outputs/bundle/release/app-release.aab
+
+  ios-release:
+    name: iOS Release IPA
+    max_build_duration: 60
+    environment:
+      flutter: stable
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          cd app
+          flutter pub get
+      - name: Build iOS
+        script: |
+          cd app
+          flutter build ios --release --no-codesign
+    artifacts:
+      - app/build/ios/iphoneos/Runner.app
