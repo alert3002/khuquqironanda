@@ -66,7 +66,7 @@
         await Future.delayed(delay);
         await _loadUserProfile();
         final newBalance = _user?.balance;
-        final prevValue = previousBalance != null ? double.tryParse(previousBalance) : null;
+        final prevValue = sBalance != null ? double.tryParse(sBalance) : null;
         final newValue = newBalance != null ? double.tryParse(newBalance) : null;
         if (newValue != null && prevValue == null) return;
         if (newValue != null && prevValue != null) {
