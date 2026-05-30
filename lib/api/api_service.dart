@@ -7,7 +7,9 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import '../models/book_model.dart';
+import '../models/legal_document_model.dart';
 import '../models/user_model.dart';
+import '../services/legal_documents_cache.dart';
 
 class ApiService {
   // --- ТАНЗИМОТИ ASOSӢ ---
@@ -547,6 +549,35 @@ class ApiService {
     }
   }
 
+  static Future<LegalDocumentsPageData?> fetchLegalDocuments() async {
+    final online = await LegalDocumentsCache.hasNetwork;
+
+    if (online) {
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl/legal-documents/'),
+          headers: await _getHeaders(auth: false),
+        );
+        if (response.statusCode == 200) {
+          final data = jsonDecode(utf8.decode(response.bodyBytes));
+          if (data is Map<String, dynamic>) {
+            final page = LegalDocumentsPageData.fromJson(data);
+            await LegalDocumentsCache.savePage(page);
+            LegalDocumentsCache.prefetchAll(
+              page.documents,
+              LegalDocumentsCache.normalizePdfUrl,
+            );
+            return page;
+          }
+        }
+      } catch (e) {
+        print('⚠️ fetchLegalDocuments: $e');
+      }
+    }
+
+    return LegalDocumentsCache.loadPage();
+  }
+
   static Future<Map<String, dynamic>> fetchAboutPage() async {
     try {
       final response = await http.get(
@@ -562,6 +593,8 @@ class ApiService {
     return {
       'title': 'Дар бораи мо',
       'content': '',
+      'purchase_guide_title': 'Чӣ тавр харидан мумкин аст',
+      'purchase_guide_content': '',
       'phone': '',
       'email': '',
       'telegram_url': '',

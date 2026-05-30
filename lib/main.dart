@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/home_screen.dart';
+import 'utils/pdf_js_assets.dart';
 
 // Security Service - барои идоракунии ҳимояи экран
 class SecurityService {
@@ -40,7 +41,10 @@ void main() async {
   await Hive.openBox('settings'); // Барои сабти Токен ва настройкаҳо
   await Hive.openBox('cache_books'); // Барои сабти Китобҳо (Офлайн)
   await Hive.openBox('cache'); // Барои сабти Raw JSON (Forever Offline)
-  
+
+  // pdf.js барои санадҳои PDF (офлайн, бе CDN)
+  Future.microtask(PdfJsAssets.ensureLoaded);
+
   // 2. Хомӯш кардани ҳимояи экран (Allow screenshots)
   await SecurityService.enableScreenSecurity(enabled: false);
 

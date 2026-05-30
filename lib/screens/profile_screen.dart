@@ -2,7 +2,6 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:intl/intl.dart';
 import '../api/api_service.dart';
 import '../models/user_model.dart';
 import '../utils/formatters.dart';
@@ -25,8 +24,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // Controllers for editable fields
   final TextEditingController _firstNameController = TextEditingController();
   final TextEditingController _lastNameController = TextEditingController();
-  final TextEditingController _birthDateController = TextEditingController();
-  DateTime? _selectedDate;
 
   @override
   void initState() {
@@ -38,7 +35,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void dispose() {
     _firstNameController.dispose();
     _lastNameController.dispose();
-    _birthDateController.dispose();
     super.dispose();
   }
 
@@ -81,6 +77,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  String _profileContactLine(User user) {
+    if (user.loginLabel.isNotEmpty) {
+      final label = user.loginLabel;
+      if (label.startsWith('@') || label.contains('Telegram')) {
+        return label;
+      }
+      return Formatters.formatPhoneNumber(label);
+    }
+    if (user.phone.trim().isNotEmpty) {
+      return Formatters.formatPhoneNumber(user.phone);
+    }
+    if (user.telegramUsername.isNotEmpty) {
+      return '@${user.telegramUsername}';
+    }
+    if (user.telegramId != null) {
+      return 'Telegram ID ${user.telegramId}';
+    }
+    return '—';
+  }
+
   Future<void> _loadUserProfile() async {
     final user = await ApiService.getUserProfile();
     if (mounted) {
@@ -89,39 +105,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (user != null) {
           _firstNameController.text = user.firstName;
           _lastNameController.text = user.lastName;
-          if (user.birthDate != null && user.birthDate!.isNotEmpty) {
-            try {
-              _selectedDate = DateTime.parse(user.birthDate!);
-              _birthDateController.text = DateFormat('yyyy-MM-dd').format(_selectedDate!);
-            } catch (e) {
-              print("Error parsing birth date: $e");
-              _selectedDate = null;
-              _birthDateController.text = '';
-            }
-          } else {
-            _selectedDate = null;
-            _birthDateController.text = '';
-          }
         }
         _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _selectDate() async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate ?? DateTime.now().subtract(const Duration(days: 365 * 18)),
-      firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
-      locale: const Locale('ru', 'RU'), // Можно изменить на нужную локаль
-    );
-    if (picked != null) {
-      // Format the date immediately to "yyyy-MM-dd" string
-      final String formattedDate = DateFormat('yyyy-MM-dd').format(picked);
-      setState(() {
-        _selectedDate = picked;
-        _birthDateController.text = formattedDate;
       });
     }
   }
@@ -145,14 +130,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'first_name': _firstNameController.text.trim(),
       'last_name': _lastNameController.text.trim(),
     };
-
-    // Handle birth_date: format as "yyyy-MM-dd" string (NOT ISO string with time)
-    if (_selectedDate != null) {
-      // Format the date to "yyyy-MM-dd" string (e.g., "1999-05-25")
-      // Do NOT send ISO string with time
-      data['birth_date'] = DateFormat('yyyy-MM-dd').format(_selectedDate!);
-    }
-    // If _selectedDate is null, don't include birth_date in the request
 
     print("📤 Sending profile update data: $data");
 
@@ -293,20 +270,120 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Future<String> _getDeviceId() async {
-    try {
-      // First try to get from Hive (saved device ID)
-      var box = Hive.box('settings');
-      String? savedDeviceId = box.get('device_id');
-      if (savedDeviceId != null && savedDeviceId.isNotEmpty) {
-        return savedDeviceId;
-      }
-
-      // If not in Hive, get current device ID using ApiService
-      return await ApiService.getDeviceId();
-    } catch (e) {
-      return 'error-getting-device-id';
+  void _openBalanceScreen() {
+    if (Platform.isIOS) {
+      _showIOSContactAdminDialog();
+      return;
     }
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const BalanceScreen()),
+    );
+  }
+
+  Widget _buildBalanceCard() {
+    return Material(
+      color: Colors.transparent,
+      elevation: 8,
+      shadowColor: const Color(0xFF1565C0).withOpacity(0.35),
+      borderRadius: BorderRadius.circular(20),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF0D47A1),
+                Color(0xFF1565C0),
+                Color(0xFF1976D2),
+              ],
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.account_balance_wallet_rounded,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Баланс',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.white.withOpacity(0.88),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${_user!.balance} сомонӣ',
+                            style: const TextStyle(
+                              fontSize: 30,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Барои пардохт ва таърих ин ҷо пахш кунед',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withOpacity(0.78),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _openBalanceScreen,
+                    icon: const Icon(Icons.add_card_rounded, size: 22),
+                    label: const Text(
+                      'Пур кардани баланс',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF0D47A1),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _handleDeleteAccount() async {
@@ -314,7 +391,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Нест кардани ҳисоб (Delete Account)"),
+        title: const Text("Нест кардани ҳисоб"),
         content: const Text(
           "Шумо мутмаин ҳастед? Ин амал бекор карда намешавад.",
           style: TextStyle(color: Colors.red),
@@ -386,18 +463,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     padding: const EdgeInsets.all(24.0),
                     child: Column(
                       children: [
-                        // User Avatar
-                        CircleAvatar(
-                          radius: 60,
-                          backgroundColor: Colors.blue[100],
-                          child: Icon(
-                            Icons.person,
-                            size: 60,
-                            color: Colors.blue[700],
-                          ),
-                        ),
-                        const SizedBox(height: 30),
-
                         // First Name (Editable)
                         Container(
                           width: double.infinity,
@@ -502,16 +567,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                "Рақами телефон",
-                                style: TextStyle(
+                              Text(
+                                _user!.phone.trim().isNotEmpty
+                                    ? "Рақами телефон"
+                                    : "Telegram",
+                                style: const TextStyle(
                                   fontSize: 12,
                                   color: Colors.grey,
                                 ),
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                Formatters.formatPhoneNumber(_user!.phone),
+                                _profileContactLine(_user!),
                                 style: const TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.w500,
@@ -522,164 +589,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const SizedBox(height: 16),
 
-                        // Balance (Prominently displayed, Navigable)
-                        InkWell(
-                          onTap: () {
-                            if (Platform.isIOS) {
-                              _showIOSContactAdminDialog();
-                              return;
-                            }
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => const BalanceScreen()),
-                            );
-                          },
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [Colors.blue[400]!, Colors.blue[600]!],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.blue.withOpacity(0.3),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              children: [
-                                const Text(
-                                  "Баланс",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  "${_user!.balance} сомонӣ",
-                                  style: const TextStyle(
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                const Text(
-                                  "Зарб кардан барои тафсилот",
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Date of Birth (Editable with DatePicker)
-                        InkWell(
-                          onTap: _selectDate,
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.grey.withOpacity(0.1),
-                                  blurRadius: 5,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  "Санаи таваллуд",
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  _birthDateController.text.isNotEmpty
-                                      ? _birthDateController.text
-                                      : "Маълумот нест (Зарб кардан барои интихоб)",
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w500,
-                                    color: _birthDateController.text.isNotEmpty ? Colors.black87 : Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Device Info (Read-only)
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.grey.withOpacity(0.1),
-                                blurRadius: 5,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                "ID-и дастгоҳ",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              FutureBuilder<String>(
-                                future: _getDeviceId(),
-                                builder: (context, snapshot) {
-                                  if (snapshot.connectionState == ConnectionState.waiting) {
-                                    return const Text(
-                                      "Боргирӣ...",
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.grey,
-                                      ),
-                                    );
-                                  }
-                                  final deviceId = snapshot.data ?? 'Маълумот нест';
-                                  return SelectableText(
-                                    deviceId,
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      fontFamily: 'monospace',
-                                    ),
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
+                        _buildBalanceCard(),
                         const SizedBox(height: 24),
 
                         // Save Changes Button
@@ -753,7 +663,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                             child: const Text(
-                              "Нест кардани ҳисоб (Delete Account)",
+                              "Нест кардани ҳисоб",
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,

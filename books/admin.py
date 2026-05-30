@@ -3,6 +3,8 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.shortcuts import render, redirect
 from django.http import HttpResponseRedirect
+
+from .legal_docs import sync_legal_document_file
 from .models import (
     Book,
     Chapter,
@@ -13,6 +15,7 @@ from .models import (
     AppleStoreTransaction,
     Transaction,
     AboutPage,
+    LegalDocument,
 )
 
 User = get_user_model()
@@ -132,3 +135,54 @@ class TransactionAdmin(admin.ModelAdmin):
 class AboutPageAdmin(admin.ModelAdmin):
     list_display = ('title', 'updated_at')
     search_fields = ('title',)
+    fieldsets = (
+        ('Дар бораи мо', {
+            'fields': ('title', 'content', 'phone', 'email', 'telegram_url', 'whatsapp_url'),
+        }),
+        ('Дастурамал: харид ва обуна (барнома)', {
+            'fields': ('purchase_guide_title', 'purchase_guide_content'),
+            'description': 'Нархҳо аз «Нақшаҳои обуна» (SubscriptionPlan) гирифта мешаванд.',
+        }),
+    )
+
+
+@admin.register(LegalDocument)
+class LegalDocumentAdmin(admin.ModelAdmin):
+    list_display = ('order', 'title_short', 'has_pdf_display', 'is_active', 'updated_at')
+    list_display_links = ('title_short',)
+    list_editable = ('order', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('title',)
+    ordering = ('order', 'id')
+    fields = ('order', 'title', 'pdf_file', 'pdf_url', 'is_active')
+
+    def title_short(self, obj):
+        return obj.title[:80] + ('…' if len(obj.title) > 80 else '')
+
+    title_short.short_description = 'Сарлавҳа'
+
+    def has_pdf_display(self, obj):
+        return '✓' if obj.has_pdf else '—'
+
+    has_pdf_display.short_description = 'PDF'
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if obj.pdf_file and obj.pdf_file.name:
+            try:
+                src = obj.pdf_file.path
+            except (ValueError, NotImplementedError):
+                src = None
+            synced = sync_legal_document_file(obj.pdf_file.name, source_path=src)
+            if synced:
+                self.message_user(
+                    request,
+                    f'PDF нусха шуд: {synced}',
+                    level=messages.SUCCESS,
+                )
+            else:
+                self.message_user(
+                    request,
+                    'PDF дар сервер ёфт нашуд — лутфан файлро аз нав бор кунед.',
+                    level=messages.WARNING,
+                )

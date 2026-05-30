@@ -1,4 +1,5 @@
 from django.shortcuts import render, get_object_or_404
+from django.http import FileResponse, HttpResponseRedirect
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.views import APIView
@@ -15,6 +16,7 @@ from django.db import transaction as db_transaction
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone as datetime_timezone
 import json
+import os
 import uuid
 from .models import (
     Book,
@@ -26,9 +28,16 @@ from .models import (
     AppleStoreTransaction,
     Transaction,
     AboutPage,
+    LegalDocument,
 )
 from .apple_iap import decode_apple_jws_payload
-from .serializers import BookSerializer, TransactionSerializer, AboutPageSerializer
+from .legal_docs import resolve_legal_document_path, legal_document_filename
+from .serializers import (
+    BookSerializer,
+    TransactionSerializer,
+    AboutPageSerializer,
+    LegalDocumentSerializer,
+)
 from .services import generate_payment_xml, create_smartpay_invoice
 
 User = get_user_model()
@@ -377,6 +386,14 @@ class SmartPayInitView(APIView):
         else:
             return_url = ''
 
+        bank_id = request.data.get('bank_id') or request.data.get('deeplink_bank_id')
+        deeplink_bank_id = None
+        if bank_id is not None and str(bank_id).strip() != '':
+            try:
+                deeplink_bank_id = int(bank_id)
+            except (TypeError, ValueError):
+                return Response({'error': 'ID-и бонки нодуруст'}, status=400)
+
         try:
             result = create_smartpay_invoice(
                 amount=amount_decimal,
@@ -384,6 +401,7 @@ class SmartPayInitView(APIView):
                 customer_phone=phone,
                 return_url=return_url,
                 order_id=order_id,
+                deeplink_bank_id=deeplink_bank_id,
             )
         except Exception as e:
             return Response({'error': f'Хатогӣ ҳангоми SmartPay: {e}'}, status=500)
@@ -401,6 +419,7 @@ class SmartPayInitView(APIView):
         )
 
         payment_link = result['payment_link']
+        deeplink_url = result.get('deeplink_url')
         html_form = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -413,10 +432,45 @@ class SmartPayInitView(APIView):
 </body>
 </html>"""
 
-        return Response({
+        response_data = {
             'payment_link': payment_link,
-            'html_form': html_form,
             'order_id': result['order_id'],
+            'success': True,
+        }
+        if deeplink_url:
+            response_data['deeplink_url'] = deeplink_url
+        else:
+            response_data['html_form'] = html_form
+        return Response(response_data)
+
+
+class SmartPayStatusView(APIView):
+    """Poll payment status by order_id (updated via SmartPay webhook)."""
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        order_id = request.query_params.get('order_id')
+        if not order_id:
+            return Response({'error': 'order_id зарур аст'}, status=400)
+
+        txn = Transaction.objects.filter(
+            user=request.user,
+            transaction_id=order_id,
+        ).first()
+        if not txn:
+            txn = Transaction.objects.filter(
+                user=request.user,
+                transaction_id__icontains=str(order_id).strip(),
+            ).first()
+
+        if not txn:
+            return Response({'status': 'unknown', 'order_id': order_id})
+
+        return Response({
+            'status': txn.status,
+            'order_id': txn.transaction_id,
+            'amount': str(txn.amount),
         })
 
 
@@ -768,6 +822,8 @@ class AboutPageView(APIView):
             return Response({
                 'title': 'Дар бораи мо',
                 'content': '',
+                'purchase_guide_title': 'Чӣ тавр харидан мумкин аст',
+                'purchase_guide_content': '',
                 'phone': '',
                 'email': '',
                 'telegram_url': '',
@@ -776,3 +832,50 @@ class AboutPageView(APIView):
             })
         serializer = AboutPageSerializer(about)
         return Response(serializer.data)
+
+
+class LegalDocumentsListView(APIView):
+    """Рӯйхати санадҳои меъёрию ҳуқуқӣ барои «Қоидаҳои ҳаракат дар роҳ»."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        documents = LegalDocument.objects.filter(is_active=True).order_by('order', 'id')
+        serializer = LegalDocumentSerializer(
+            documents,
+            many=True,
+            context={'request': request},
+        )
+        return Response({
+            'title': 'Рӯйхати санадҳои меъёрию ҳуқуқии дар китоб истифода шуда',
+            'intro': (
+                'Дар китоби мазкур санадҳои меъёрию ҳуқуқи (СМҲ) - и зерин '
+                'истифода карда шудааст:'
+            ),
+            'documents': serializer.data,
+        })
+
+
+class LegalDocumentPdfView(APIView):
+    """PDF-и санад — барои Web/барнома бе мушкилии CORS."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        document = get_object_or_404(LegalDocument, pk=pk, is_active=True)
+        if document.pdf_file and document.pdf_file.name:
+            disk_path = resolve_legal_document_path(document.pdf_file.name)
+            if disk_path and os.path.isfile(disk_path):
+                return FileResponse(
+                    open(disk_path, 'rb'),
+                    content_type='application/pdf',
+                    filename=os.path.basename(disk_path),
+                )
+            # Fallback: storage-и Django (масалан /media/legal_documents/...)
+            if document.pdf_file.storage.exists(document.pdf_file.name):
+                return FileResponse(
+                    document.pdf_file.open('rb'),
+                    content_type='application/pdf',
+                    filename=legal_document_filename(document.pdf_file.name),
+                )
+        if document.pdf_url:
+            return HttpResponseRedirect(document.pdf_url.strip())
+        return HttpResponse('PDF нест', status=404)

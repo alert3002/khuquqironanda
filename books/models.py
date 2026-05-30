@@ -166,10 +166,53 @@ class Transaction(models.Model):
         return f"{self.transaction_id} - {self.user.phone} - {self.amount}"
 
 
+class LegalDocument(models.Model):
+    """Санадҳои меъёрию ҳуқуқӣ — рӯйхати «Қоидаҳои ҳаракат дар роҳ»"""
+    order = models.PositiveIntegerField(default=1, verbose_name="№ дар рӯйхат")
+    title = models.CharField(max_length=500, verbose_name="Сарлавҳа")
+    pdf_file = models.FileField(
+        upload_to='legal_documents/',
+        blank=True,
+        null=True,
+        verbose_name="Файли PDF",
+    )
+    pdf_url = models.URLField(
+        blank=True,
+        verbose_name="Ссылкаи PDF (URL)",
+        help_text="Агар файл бор накунед, истифода баред: https://.../file.pdf",
+    )
+    is_active = models.BooleanField(default=True, verbose_name="Фаъол")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+        verbose_name = "Санади меъёрию ҳуқуқӣ"
+        verbose_name_plural = "Санадҳои меъёрию ҳуқуқӣ (Қоидаҳои ҳаракат дар роҳ)"
+
+    def __str__(self):
+        return f"{self.order}. {self.title[:60]}"
+
+    @property
+    def has_pdf(self):
+        return bool(self.pdf_file) or bool(self.pdf_url.strip() if self.pdf_url else False)
+
+
 class AboutPage(models.Model):
-    """Маълумоти саҳифаи 'Дар бораи мо'"""
+    """Маълумоти саҳифаи 'Дар бораи мо' ва дастурамали харид"""
     title = models.CharField(max_length=200, verbose_name="Сарлавҳа", default="Дар бораи мо")
     content = RichTextUploadingField(verbose_name="Матн", blank=True)
+    purchase_guide_title = models.CharField(
+        max_length=200,
+        blank=True,
+        default='Чӣ тавр харидан мумкин аст',
+        verbose_name='Сарлавҳаи дастурамал (харид)',
+    )
+    purchase_guide_content = RichTextUploadingField(
+        verbose_name='Дастурамал: чӣ тавр харидан',
+        blank=True,
+        help_text='Қадамҳо барои хариди китоб/обуна. Дар барнома зери «Тарифҳо» намоиш дода мешавад.',
+    )
     phone = models.CharField(max_length=50, blank=True, verbose_name="Телефон")
     email = models.EmailField(blank=True, verbose_name="Email")
     telegram_url = models.URLField(blank=True, verbose_name="Telegram")

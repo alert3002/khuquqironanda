@@ -1,59 +1,114 @@
-<<<<<<< HEAD
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.authtoken.models import Token as AuthToken 
-from rest_framework.authentication import TokenAuthentication
-from django.contrib.auth import get_user_model
-from django.conf import settings
-from django.utils import timezone
-from datetime import timedelta
-from .models import PhoneOTP
+import logging
 import random
+from datetime import timedelta
+
 from django.apps import apps
-from .utils import send_osonsms
-from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django.utils.decorators import method_decorator
-User = get_user_model()
-from rest_framework.permissions import IsAuthenticated 
+from django.shortcuts import redirect, render
+from django.views.decorators.csrf import csrf_exempt
+from urllib.parse import quote, urlencode
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .models import PhoneOTP
 from .serializers import UserSerializer
+from .telegram_oauth import (
+    app_auth_redirect_url,
+    build_authorization_url,
+    decode_id_token,
+    exchange_code_for_tokens,
+    oauth_configured,
+    pop_oauth_state,
+)
+from .utils import apply_telegram_profile, send_osonsms, verify_telegram_login
+
+logger = logging.getLogger(__name__)
+User = get_user_model()
+
+OTP_EXPIRY_MINUTES = getattr(settings, 'OTP_EXPIRY_MINUTES', 5)
+OTP_RATE_LIMIT_SECONDS = getattr(settings, 'OTP_RATE_LIMIT_SECONDS', 60)
+
+
+def _normalize_phone(phone):
+    return str(phone).replace(' ', '')
+
+
+def _save_device_id(user, device_id):
+    if not device_id:
+        return
+    device_id = str(device_id).strip()[:255]
+    if device_id and user.device_id != device_id:
+        user.device_id = device_id
+        user.save(update_fields=['device_id'])
+
+
+def _flatten_payload(data):
+    flat = {}
+    for key, value in data.items():
+        if isinstance(value, list):
+            flat[key] = value[0] if value else ''
+        else:
+            flat[key] = value
+    return flat
+
 
 @method_decorator(csrf_exempt, name='dispatch')
 class SendCodeView(APIView):
     def post(self, request):
-        print(f"=== SendCodeView POST request ===")
-        print(f"Request data: {request.data}")
-        print(f"Request META: {request.META.get('CONTENT_TYPE', 'N/A')}")
-        
         phone = request.data.get('phone')
-        print(f"Phone received: {phone}")
-        
         if not phone:
-            print("Error: Phone is missing")
             return Response({'error': 'Телефонро ворид кунед'}, status=400)
 
-        phone = str(phone).replace(" ", "")
+        phone = _normalize_phone(phone)
+        demo_map = getattr(settings, 'DEMO_OTP_MAP', {})
+        demo_mode = getattr(settings, 'DEMO_MODE', False)
 
         existing_otp = PhoneOTP.objects.filter(phone=phone).first()
-        if existing_otp and existing_otp.updated_at >= timezone.now() - timedelta(seconds=60):
-            code = existing_otp.code
-            print(f"Reusing recent code: {code}")
+        if existing_otp:
+            elapsed = (timezone.now() - existing_otp.updated_at).total_seconds()
+            if elapsed < OTP_RATE_LIMIT_SECONDS:
+                retry_after = int(OTP_RATE_LIMIT_SECONDS - elapsed) + 1
+                return Response(
+                    {
+                        'error': 'Лутфан пас аз чанд сония дубора кӯшиш кунед',
+                        'retry_after': retry_after,
+                    },
+                    status=429,
+                )
+
+        if demo_mode and phone in demo_map:
+            code = str(demo_map[phone])
         else:
             code = str(random.randint(1000, 9999))
-            print(f"Generated code: {code}")
-            PhoneOTP.objects.update_or_create(
-                phone=phone, defaults={'code': code}
-            )
-        
-        # Ирсоли SMS
-        print(f"Sending SMS to {phone} with code {code}")
+
+        PhoneOTP.objects.update_or_create(phone=phone, defaults={'code': code})
+
+        if demo_mode and phone in demo_map:
+            response = {'message': 'Код фиристода шуд!', 'success': True}
+            if getattr(settings, 'DEBUG', False):
+                response['code'] = code
+            return Response(response)
+
         sms_result = send_osonsms(phone, code)
-        print(f"SMS send result: {sms_result}")
-        
-        print(f"--- KODI SANOCHI: {code} ---")
-        response = {'message': 'Код фиристода шуд!'}
+        if not sms_result['success']:
+            return Response(
+                {
+                    'error': sms_result['error'] or 'Ирсоли SMS ноком шуд',
+                    'success': False,
+                },
+                status=502,
+            )
+
+        response = {'message': 'Код фиристода шуд!', 'success': True}
         if getattr(settings, 'DEBUG', False):
             response['code'] = code
         return Response(response)
+
 
 @method_decorator(csrf_exempt, name='dispatch')
 class VerifyCodeView(APIView):
@@ -64,7 +119,7 @@ class VerifyCodeView(APIView):
         if not phone or not code:
             return Response({'error': 'Маълумотро пурра ворид кунед'}, status=400)
 
-        phone = str(phone).replace(" ", "")
+        phone = _normalize_phone(phone)
         code = str(code).strip()
 
         try:
@@ -72,187 +127,165 @@ class VerifyCodeView(APIView):
         except PhoneOTP.DoesNotExist:
             return Response({'error': 'Код нодуруст аст'}, status=400)
 
-        if otp_obj.updated_at < timezone.now() - timedelta(minutes=5):
-            return Response({'error': 'Код кӯҳна шудааст, дубора фиристед'}, status=400)
+        if otp_obj.updated_at < timezone.now() - timedelta(minutes=OTP_EXPIRY_MINUTES):
+            return Response(
+                {'error': 'Код кӯҳна шудааст, дубора фиристед'},
+                status=400,
+            )
 
         if otp_obj.code != code:
             return Response({'error': 'Код нодуруст аст'}, status=400)
 
-        # Сохтани корбар
-        user, created = User.objects.get_or_create(phone=phone)
+        user, _ = User.objects.get_or_create(phone=phone)
+        _save_device_id(user, request.data.get('device_id'))
 
-        # --- ГИРИФТАНИ ТОКЕН (РОҲИ БЕХАТАР) ---
         TokenModel = apps.get_model('authtoken', 'Token')
         token, _ = TokenModel.objects.get_or_create(user=user)
-        # --------------------------------------
 
         otp_obj.delete()
 
         return Response({'token': token.key, 'user_id': user.id})
-    
+
+
+def telegram_login_page(request):
+    """Саҳифаи воридшавии Telegram (OIDC) барои WebView."""
+    error = request.GET.get('error', '')
+    return render(
+        request,
+        'users/telegram_login.html',
+        {
+            'bot_username': getattr(
+                settings, 'TELEGRAM_BOT_USERNAME', 'huquqironanda_bot',
+            ).strip().lstrip('@'),
+            'oauth_ready': oauth_configured(),
+            'error': error,
+        },
+    )
+
+
+def telegram_oauth_start(request):
+    """Оғози OIDC → redirect ба oauth.telegram.org."""
+    if not oauth_configured():
+        return redirect('/telegram-login/?error=oauth_not_configured')
+    redirect_uri = request.build_absolute_uri('/telegram-login/oauth/callback/')
+    device_id = request.GET.get('device_id', '')
+    app_mode = request.GET.get('app') == '1'
+    auth_url = build_authorization_url(
+        redirect_uri=redirect_uri,
+        device_id=device_id,
+        app_mode=app_mode,
+    )
+    return redirect(auth_url)
+
+
+def telegram_oauth_callback(request):
+    """Callback аз Telegram OIDC."""
+    code = request.GET.get('code')
+    state = request.GET.get('state')
+    stored = pop_oauth_state(state or '') or {}
+    app_mode = bool(stored.get('app'))
+
+    oauth_error = request.GET.get('error_description') or request.GET.get('error')
+    if oauth_error:
+        if app_mode:
+            return redirect(app_auth_redirect_url(error=str(oauth_error)[:200]))
+        return redirect(f'/telegram-login/?error={oauth_error}')
+
+    if not code or not stored:
+        if app_mode:
+            return redirect(app_auth_redirect_url(error='invalid_state'))
+        return redirect('/telegram-login/?error=invalid_state')
+
+    redirect_uri = request.build_absolute_uri('/telegram-login/oauth/callback/')
+    try:
+        token_payload = exchange_code_for_tokens(
+            code=code,
+            verifier=stored['verifier'],
+            redirect_uri=redirect_uri,
+        )
+        claims = decode_id_token(token_payload['id_token'])
+    except Exception as exc:
+        logger.exception('Telegram OAuth callback failed')
+        err = str(exc)[:120]
+        if app_mode:
+            return redirect(app_auth_redirect_url(error=err))
+        return redirect(f'/telegram-login/?error={quote(err)}')
+
+    try:
+        telegram_id = int(claims.get('id') or claims.get('sub'))
+    except (TypeError, ValueError):
+        if app_mode:
+            return redirect(app_auth_redirect_url(error='no_telegram_id'))
+        return redirect('/telegram-login/?error=no_telegram_id')
+
+    user, _ = User.objects.update_or_create(
+        telegram_id=telegram_id,
+        defaults={'first_name': '', 'last_name': ''},
+    )
+    apply_telegram_profile(user, claims=claims)
+    _save_device_id(user, stored.get('device_id'))
+
+    TokenModel = apps.get_model('authtoken', 'Token')
+    token, _ = TokenModel.objects.get_or_create(user=user)
+
+    if app_mode:
+        return redirect(app_auth_redirect_url(token=token.key))
+
+    params = {'success': '1', 'token': token.key}
+    return redirect(f'/telegram-login/?{urlencode(params)}')
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class TelegramLoginView(APIView):
+    """POST /api/auth/telegram/ — Telegram Login Widget."""
+
+    def post(self, request):
+        bot_token = getattr(settings, 'TELEGRAM_BOT_TOKEN', '') or ''
+        if not bot_token:
+            return Response(
+                {'error': 'Telegram Login танзим нашудааст'},
+                status=503,
+            )
+
+        data = _flatten_payload(request.data)
+        if not verify_telegram_login(data, bot_token):
+            return Response({'error': 'Маълумоти Telegram нодуруст аст'}, status=400)
+
+        try:
+            telegram_id = int(data['id'])
+        except (KeyError, TypeError, ValueError):
+            return Response({'error': 'id-и Telegram лозим аст'}, status=400)
+
+        user, created = User.objects.update_or_create(
+            telegram_id=telegram_id,
+            defaults={'first_name': '', 'last_name': ''},
+        )
+        apply_telegram_profile(user, widget_data=data)
+        _save_device_id(user, request.data.get('device_id'))
+
+        TokenModel = apps.get_model('authtoken', 'Token')
+        token, _ = TokenModel.objects.get_or_create(user=user)
+
+        return Response(
+            {
+                'token': token.key,
+                'user_id': user.id,
+                'created': created,
+            }
+        )
+
+
 class UserProfileView(APIView):
-    """
-    Ин View барои гирифтан ва тағйир додани маълумоти корбар (Профил)
-    """
     authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated] # Фақат агар Token дошта бошад, кор мекунад
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Маълумоти ҳамон корбареро мегирад, ки Token равон кардааст
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
     def patch(self, request):
-        # Барои иваз кардани Ном ва Фамилия
         serializer = UserSerializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
-        return Response(serializer.errors, status=400)    
-=======
-from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from django.contrib.auth import get_user_model
-from django.utils import timezone
-from datetime import timedelta
-from .serializers import UserSerializer, SubscriptionPlanSerializer
-from .models import SubscriptionPlan, Subscription
-
-User = get_user_model()
-
-
-@api_view(['GET', 'PUT', 'PATCH', 'DELETE'])
-@permission_classes([IsAuthenticated])
-def UserProfileView(request):
-    """
-    GET: Получить профиль пользователя
-    PUT/PATCH: Обновить профиль пользователя (first_name, last_name, birth_date)
-    DELETE: Удалить аккаунт пользователя
-    """
-    user = request.user
-    
-    if request.method == 'GET':
-        serializer = UserSerializer(user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-    
-    elif request.method in ['PUT', 'PATCH']:
-        # Разрешаем обновление только определенных полей
-        allowed_fields = ['first_name', 'last_name', 'birth_date']
-        data = {k: v for k, v in request.data.items() if k in allowed_fields}
-        
-        serializer = UserSerializer(user, data=data, partial=request.method == 'PATCH')
-        
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    elif request.method == 'DELETE':
-        # Удаление аккаунта пользователя
-        user.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    
-    return Response(
-        {'error': 'Method not allowed'}, 
-        status=status.HTTP_405_METHOD_NOT_ALLOWED
-    )
-
-
-@api_view(['GET'])
-@permission_classes([])  # Public endpoint - no authentication required
-def SubscriptionPlansView(request):
-    """
-    GET: Get list of active subscription plans.
-    Returns all active subscription plans available for purchase.
-    """
-    plans = SubscriptionPlan.objects.filter(is_active=True).order_by('price')
-    serializer = SubscriptionPlanSerializer(plans, many=True)
-    return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def PurchaseSubscriptionView(request):
-    """
-    POST: Purchase a subscription plan.
-    Requires: plan_id in request body.
-    Validates user balance and creates subscription with expires_at calculated from plan.days.
-    """
-    user = request.user
-    plan_id = request.data.get('plan_id')
-    
-    if not plan_id:
-        return Response(
-            {'success': False, 'error': 'plan_id is required'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    try:
-        plan = SubscriptionPlan.objects.get(id=plan_id, is_active=True)
-    except SubscriptionPlan.DoesNotExist:
-        return Response(
-            {'success': False, 'error': 'Subscription plan not found or inactive'},
-            status=status.HTTP_404_NOT_FOUND
-        )
-    
-    # Validate user balance
-    if user.balance < plan.price:
-        return Response(
-            {
-                'success': False,
-                'error': f'Баланси шумо кифоя нест. Баланс: {user.balance}, Нарх: {plan.price}'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    # Calculate expires_at based on plan.days
-    # If user has an active subscription, extend from expires_at, otherwise from now
-    now = timezone.now()
-    existing_subscription = Subscription.objects.filter(
-        user=user,
-        is_active=True,
-        expires_at__gt=now
-    ).order_by('-expires_at').first()
-    
-    if existing_subscription and existing_subscription.expires_at > now:
-        # Extend from existing expiration date
-        expires_at = existing_subscription.expires_at + timedelta(days=plan.days)
-    else:
-        # Start from now
-        expires_at = now + timedelta(days=plan.days)
-    
-    # Deduct balance
-    user.balance -= plan.price
-    user.save()
-    
-    # Create subscription
-    subscription = Subscription.objects.create(
-        user=user,
-        plan=plan,
-        expires_at=expires_at,
-        is_active=True
-    )
-    
-    # Deactivate old subscriptions (optional - if you want only one active subscription)
-    Subscription.objects.filter(
-        user=user,
-        is_active=True
-    ).exclude(id=subscription.id).update(is_active=False)
-    
-    return Response(
-        {
-            'success': True,
-            'message': f'Обунаи "{plan.name}" бо муваффақият харида шуд',
-            'subscription': {
-                'id': subscription.id,
-                'plan_name': plan.name,
-                'expires_at': subscription.expires_at.isoformat(),
-            },
-            'balance': float(user.balance),
-        },
-        status=status.HTTP_201_CREATED
-    )
-
->>>>>>> a8f22a8973d7365b3dc32dbc0ffe15ba3b9e85a5
+        return Response(serializer.errors, status=400)

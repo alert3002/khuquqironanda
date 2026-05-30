@@ -19,7 +19,7 @@ if (hasKeystore) {
 }
 
 android {
-    namespace = "com.bookkhuquqronanda.week"
+    namespace = "com.khuquqironanda.week"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -34,7 +34,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.bookkhuquqronanda.week"
+        applicationId = "com.khuquqironanda.week"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

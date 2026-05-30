@@ -109,9 +109,17 @@ def generate_payment_xml(order_id, amount, description, phone):
     return full_xml
 
 
-def create_smartpay_invoice(amount, description, customer_phone, return_url, order_id=None):
+def create_smartpay_invoice(
+    amount,
+    description,
+    customer_phone,
+    return_url,
+    order_id=None,
+    deeplink_bank_id=None,
+):
     """
     Create SmartPay invoice and return payment link + raw response.
+    When deeplink_bank_id is set, SmartPay returns deeplink_url for white-label.
     """
     api_url = settings.SMARTPAY_API_URL
     api_token = settings.SMARTPAY_API_TOKEN
@@ -125,6 +133,8 @@ def create_smartpay_invoice(amount, description, customer_phone, return_url, ord
         "customer_phone": customer_phone,
         "return_url": return_url,
     }
+    if deeplink_bank_id is not None:
+        payload["deeplink_bank_id"] = int(deeplink_bank_id)
 
     headers = {
         "x-app-token": api_token,
@@ -148,8 +158,9 @@ def create_smartpay_invoice(amount, description, customer_phone, return_url, ord
 
     return {
         "order_id": data.get("order_id", order_id),
-        "invoice_id": data.get("id"),
+        "invoice_id": data.get("invoice_uuid") or data.get("id"),
         "payment_link": payment_link,
+        "deeplink_url": data.get("deeplink_url"),
         "raw": data,
     }
 

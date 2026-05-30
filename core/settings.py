@@ -25,16 +25,48 @@ SECRET_KEY = 'django-insecure-1uljb@9^*op6afg^!0%bym#s)rs9b$niqr!in$bc-(d1c-if(c
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['books.1week.tj', '62.60.239.81', 'www.books.1week.tj', '127.0.0.1', 'localhost']
-CSRF_TRUSTED_ORIGINS = ['https://books.1week.tj']
+ALLOWED_HOSTS = [
+    'books.1week.tj',
+    'www.books.1week.tj',
+    'books.payvandtrans.com',
+    'www.books.payvandtrans.com',
+    '62.60.239.81',
+    '127.0.0.1',
+    'localhost',
+]
+CSRF_TRUSTED_ORIGINS = [
+    'https://books.1week.tj',
+    'https://www.books.1week.tj',
+    'https://books.payvandtrans.com',
+    'http://books.payvandtrans.com',
+]
 AUTH_USER_MODEL = 'users.CustomUser'
-OSONSMS_LOGIN = 'alijon3002'  
-OSONSMS_HASH = 'f952f60ecc366c7ef161a1666bd681c2'  
-OSONSMS_SENDER = '1week.tj'
+OSONSMS_LOGIN = os.environ.get('OSONSMS_LOGIN', 'alijon3002').strip()
+OSONSMS_HASH = os.environ.get('OSONSMS_HASH', 'f952f60ecc366c7ef161a1666bd681c2').strip()
+OSONSMS_SENDER = os.environ.get('OSONSMS_SENDER', '1week.tj').strip()
+
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
+TELEGRAM_BOT_USERNAME = os.environ.get(
+    'TELEGRAM_BOT_USERNAME', 'huquqironanda_bot',
+).strip().lstrip('@')
+# OIDC Login (BotFather → Web Login → Client ID / Secret)
+TELEGRAM_CLIENT_ID = os.environ.get('TELEGRAM_CLIENT_ID', '').strip()
+TELEGRAM_CLIENT_SECRET = os.environ.get('TELEGRAM_CLIENT_SECRET', '').strip()
+# Deep link барои баргашт ба Flutter пас аз OAuth (1 қадам)
+TELEGRAM_APP_CALLBACK_SCHEME = os.environ.get(
+    'TELEGRAM_APP_CALLBACK_SCHEME', 'khuquqironanda',
+).strip()
+
+OTP_EXPIRY_MINUTES = 5
+OTP_RATE_LIMIT_SECONDS = 60
+DEMO_MODE = False
+DEMO_OTP_MAP = {
+    '+992921234567': '3002',
+}
 APP_NAME = 'Ҳуқуқи ронанда'
 
 # iOS App Store (StoreKit / JWS bundleId санҷиш)
-APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.bookkhuquqronanda.week')
+APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.khuquqironanda.week')
 
 # SmartPay Settings
 SMARTPAY_API_TOKEN = 'def4e0372504f712a035a17ba570e42fadfb6ba9d0029df9639267a246936e8f'
@@ -166,6 +198,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5000",
     "http://127.0.0.1:5000",
     "https://books.1week.tj",
+    "https://books.payvandtrans.com",
+    "http://books.payvandtrans.com",
 ]
 
 # Барои development - иҷоза медиҳад, ки ҳамаи доменҳо дастрас бошанд
@@ -195,6 +229,19 @@ CORS_ALLOW_METHODS = [
 ]
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.environ.get(
+    'MEDIA_ROOT',
+    os.path.join(BASE_DIR, 'media'),
+)
+
+# PDF-ҳои «Қоидаҳои ҳаракат дар роҳ» — бевосита дар ин папка (бе /media/)
+# Сервер: /www/wwwroot/books.payvandtrans.com/legal_documents
+LEGAL_DOCUMENTS_ROOT = os.environ.get(
+    'LEGAL_DOCUMENTS_ROOT',
+    os.path.join(BASE_DIR, 'legal_documents'),
+)
 
 # Танзимоти Django REST Framework
 REST_FRAMEWORK = {

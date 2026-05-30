@@ -1,7 +1,12 @@
 class Formatters {
   static String formatPhoneNumber(String phone) {
-    // Удаление всех нецифровых символов
+    if (phone.trim().isEmpty) {
+      return '—';
+    }
     String cleaned = phone.replaceAll(RegExp(r'[^\d]'), '');
+    if (cleaned.isEmpty) {
+      return '—';
+    }
     
     // Если номер начинается с '992', убираем префикс
     if (cleaned.startsWith('992')) {

@@ -10,8 +10,9 @@ from .models import (
     Subscription,
     Transaction,
     AboutPage,
+    LegalDocument,
 )
-
+from .legal_docs import resolve_legal_document_path
 
 def _user_has_chapter_access(user, chapter):
     if chapter.is_free:
@@ -106,4 +107,43 @@ class TransactionSerializer(serializers.ModelSerializer):
 class AboutPageSerializer(serializers.ModelSerializer):
     class Meta:
         model = AboutPage
-        fields = ['title', 'content', 'phone', 'email', 'telegram_url', 'whatsapp_url', 'updated_at']
+        fields = [
+            'title', 'content',
+            'purchase_guide_title', 'purchase_guide_content',
+            'phone', 'email', 'telegram_url', 'whatsapp_url', 'updated_at',
+        ]
+
+
+class LegalDocumentSerializer(serializers.ModelSerializer):
+    pdf_url = serializers.SerializerMethodField()
+    has_pdf = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LegalDocument
+        fields = ['id', 'order', 'title', 'pdf_url', 'has_pdf']
+
+    def get_pdf_url(self, obj):
+        request = self.context.get('request')
+        if obj.pdf_file and obj.pdf_file.name:
+            if resolve_legal_document_path(obj.pdf_file.name):
+                # Ссылкаи админка (/media/legal_documents/...) — дар сервер кор мекунад
+                rel_url = obj.pdf_file.url
+                if request is not None:
+                    return request.build_absolute_uri(rel_url)
+                return rel_url
+        external = (obj.pdf_url or '').strip()
+        if external and request is not None:
+            if external.startswith('http://') or external.startswith('https://'):
+                return external
+            return request.build_absolute_uri(external)
+        return external
+
+    def get_has_pdf(self, obj):
+        if obj.pdf_file and obj.pdf_file.name:
+            if resolve_legal_document_path(obj.pdf_file.name):
+                return True
+            try:
+                return bool(obj.pdf_file.path and obj.pdf_file.storage.exists(obj.pdf_file.name))
+            except (ValueError, NotImplementedError):
+                return False
+        return bool(obj.pdf_url and obj.pdf_url.strip())

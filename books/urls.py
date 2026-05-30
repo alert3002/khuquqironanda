@@ -8,12 +8,15 @@ from .views import (
     PurchaseSubscriptionView,
     InitPaymentView,
     SmartPayInitView,
+    SmartPayStatusView,
     PaymentHistoryView,
     PaymentSuccessView,
     PaymentCancelView,
     PaymentDeclineView,
     SmartPayWebhookView,
     AboutPageView,
+    LegalDocumentsListView,
+    LegalDocumentPdfView,
     AppleIAPConfirmView,
 )
 
@@ -30,6 +33,7 @@ urlpatterns = [
     # Payment endpoints
     path('payment/init/', InitPaymentView.as_view(), name='init-payment'),
     path('payment/smartpay/init/', SmartPayInitView.as_view(), name='smartpay-init'),
+    path('payment/smartpay/status/', SmartPayStatusView.as_view(), name='smartpay-status'),
     path('payment/smartpay/webhook/', SmartPayWebhookView.as_view(), name='smartpay-webhook'),
     path('payment/history/', PaymentHistoryView.as_view(), name='payment-history'),
     path('payment/success/', PaymentSuccessView.as_view(), name='payment-success'),
@@ -38,4 +42,10 @@ urlpatterns = [
     path('iap/apple/confirm/', AppleIAPConfirmView.as_view(), name='apple-iap-confirm'),
     path('about/', AboutPageView.as_view(), name='about-page'),
     path('books/about/', AboutPageView.as_view(), name='books-about-page'),
+    path('legal-documents/', LegalDocumentsListView.as_view(), name='legal-documents'),
+    path(
+        'legal-documents/<int:pk>/pdf/',
+        LegalDocumentPdfView.as_view(),
+        name='legal-document-pdf',
+    ),
 ]
