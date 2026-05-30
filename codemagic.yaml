@@ -18,29 +18,39 @@ workflows:
 
   ios-release:
     name: iOS Release IPA
-    max_build_duration: 60
+    max_build_duration: 90
+    integrations:
+      # Номи интегратсия дар Codemagic → Team settings → Integrations → App Store Connect
+      app_store_connect: codemagic
     environment:
       flutter: stable
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.khuquqironanda.week
     scripts:
       - name: Get Flutter packages
         script: |
-          if [ -f app/pubspec.yaml ]; then cd app; fi
+          cd app
           flutter pub get
-      - name: Build iOS IPA (CFBundleVersion ҳамеша > 21; монорепо ё Flutter дар реша)
+      - name: Set up iOS code signing
         script: |
-          # Агар Flutter дар папкаи app бошад (монорепо):
-          if [ -f app/pubspec.yaml ]; then cd app; fi
-          # Акнун pubspec дар ҷойи кор бояд бошад
+          cd app
+          keychain initialize
+          app-store-connect fetch-signing-files "com.khuquqironanda.week" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build iOS IPA
+        script: |
+          cd app
           FULL=$(grep '^version:' pubspec.yaml | head -1 | awk '{print $2}')
           NAME=${FULL%+*}
           SPEC_NUM=${FULL#*+}
-          # Codemagic BUILD_NUMBER ҳар build +1 мешавад → +100 аз 21 болотар ва такрорӣ намешавад
           CM=${BUILD_NUMBER:-1}
           FINAL=$(( CM + 100 ))
-          # Агар дар pubspec рақами калонтар бошад, онро гирем
           if [ "$SPEC_NUM" -gt "$FINAL" ] 2>/dev/null; then FINAL=$SPEC_NUM; fi
-          echo "pubspec +N=$SPEC_NUM BUILD_NUMBER=$CM => using CFBundleVersion=$FINAL (build-name=$NAME)"
+          echo "pubspec +N=$SPEC_NUM BUILD_NUMBER=$CM => CFBundleVersion=$FINAL build-name=$NAME"
           flutter build ipa --release --build-name="$NAME" --build-number="$FINAL"
     artifacts:
       - app/build/ios/ipa/*.ipa
-      - build/ios/ipa/*.ipa
