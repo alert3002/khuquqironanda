@@ -1,4 +1,4 @@
-package com.bookkhuquqronanda.week
+package com.khuquqironanda.week
 
 import android.os.Bundle
 import android.view.WindowManager
@@ -17,4 +17,3 @@ class MainActivity : FlutterActivity() {
         // Screen protection disabled to allow screenshots.
     }
 }
-

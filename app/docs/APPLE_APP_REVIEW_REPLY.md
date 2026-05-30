@@ -18,7 +18,7 @@ Thank you for your feedback. We have updated the app and would like to address e
 1. Open the app and go to **Profile** (tap the person icon in the top-right corner of the Home screen).
 2. Sign in if you are not already signed in (account deletion is available only when the user is logged in).
 3. Scroll to the bottom of the Profile screen.
-4. Tap the red button: **"Нест кардани ҳисоб (Delete Account)"**.
+4. Tap the red button: **"Нест кардани ҳисоб "**.
 5. Confirm in the dialog. The app then calls our backend `DELETE /auth/profile/` and permanently deletes the user account and all associated data from our servers. The user is returned to the login screen.
 
 We have added the English label “(Delete Account)” next to the Tajik text so the feature is easy to locate during review. This is a permanent deletion, not a temporary deactivation.

@@ -44,5 +44,18 @@
 	<string>Дастрасӣ барои хондани файлҳои китоб ва ҳуҷҷатҳо лозим аст.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ин барнома барои функсияҳои аудиоӣ ба дастрасӣ ба микрофон ниёз дорад.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.khuquqironanda.week</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>khuquqironanda</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

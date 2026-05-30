@@ -209,7 +209,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
                 ),
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(6), // Assuming 6-digit code
+                  LengthLimitingTextInputFormatter(4),
                 ],
                 decoration: const InputDecoration(
                   labelText: "Коди СМС",
@@ -217,6 +217,12 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.lock),
                 ),
+                onChanged: (value) {
+                  if (value.length == 4 && !_isLoading) {
+                    FocusScope.of(context).unfocus();
+                    _onVerifyPressed();
+                  }
+                },
                 onSubmitted: (_) => _onVerifyPressed(),
               ),
               const SizedBox(height: 30),

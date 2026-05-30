@@ -1,9 +1,11 @@
-  import 'package:flutter/material.dart';
-  import 'package:url_launcher/url_launcher.dart';
-  import '../api/api_service.dart';
-  import '../models/user_model.dart';
-  import 'payment_webview.dart';
-  import 'payment_history_screen.dart';
+import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../api/api_service.dart';
+import '../models/user_model.dart';
+import '../utils/region_utils.dart';
+import 'payment_history_screen.dart';
+import 'payment_webview.dart';
+import 'smartpay_payment_screen.dart';
 
   class BalanceScreen extends StatefulWidget {
     final double? initialAmount;
@@ -66,7 +68,8 @@
         await Future.delayed(delay);
         await _loadUserProfile();
         final newBalance = _user?.balance;
-        final prevValue = sBalance != null ? double.tryParse(sBalance) : null;
+        final prevValue =
+            previousBalance != null ? double.tryParse(previousBalance) : null;
         final newValue = newBalance != null ? double.tryParse(newBalance) : null;
         if (newValue != null && prevValue == null) return;
         if (newValue != null && prevValue != null) {
@@ -84,7 +87,7 @@
         return;
       }
 
-      final amount = double.tryParse(amountText);
+      final amount = double.tryParse(amountText.replaceAll(',', '.'));
       if (amount == null || amount <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Маблағи нодуруст')),
@@ -92,19 +95,29 @@
         return;
       }
 
-      await _processPayment(amount);
+      if (isTajikistanUser(_user)) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => SmartPayPaymentScreen(
+              initialAmount: amount,
+              paymentDescription: widget.paymentDescription,
+              user: _user,
+            ),
+          ),
+        );
+        await _loadUserProfile();
+        return;
+      }
+
+      await _processPaymentLegacy(amount);
     }
 
-    // Умумии функсия барои иҷрои пардохт
-    Future<void> _processPayment(
-      double amount,
-    ) async {
+    Future<void> _processPaymentLegacy(double amount) async {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(),
-        ),
+        builder: (context) => const Center(child: CircularProgressIndicator()),
       );
 
       try {
@@ -113,62 +126,57 @@
           description: widget.paymentDescription,
         );
 
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
+        if (mounted) Navigator.of(context).pop();
 
         final balanceBefore = _user?.balance;
-        if (result['success'] == true && result['html_form'] != null) {
+        final htmlForm = result['html_form']?.toString();
+        final paymentLink = result['payment_link']?.toString();
+
+        if (result['success'] == true &&
+            ((htmlForm != null && htmlForm.isNotEmpty) ||
+                (paymentLink != null && paymentLink.isNotEmpty))) {
           final paymentResult = await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => PaymentWebView(
-                htmlForm: result['html_form'],
+                htmlForm: htmlForm ?? '',
+                paymentUrl:
+                    (htmlForm == null || htmlForm.isEmpty) ? paymentLink : null,
               ),
             ),
           );
 
-          if (mounted) {
-            if (paymentResult == PaymentResultStatus.success) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Баланс пур шуд!"),
-                  backgroundColor: Colors.green,
-                ),
-              );
-              await _refreshBalanceAfterPayment(previousBalance: balanceBefore);
-            } else if (paymentResult == PaymentResultStatus.failed) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Пардохт рад шуд"),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            } else if (paymentResult == PaymentResultStatus.canceled) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Пардохт бекор шуд"),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Пардохт анҷом нашуд"),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
-          }
-        } else {
-          if (mounted) {
+          if (!mounted) return;
+          if (paymentResult == PaymentResultStatus.success) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(result['error'] ?? 'Хатогӣ дар оғози пардохт'),
+              const SnackBar(
+                content: Text('Баланс пур шуд!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            await _refreshBalanceAfterPayment(previousBalance: balanceBefore);
+          } else if (paymentResult == PaymentResultStatus.failed) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Пардохт рад шуд'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          } else if (paymentResult == PaymentResultStatus.canceled) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Пардохт бекор шуд'),
                 backgroundColor: Colors.red,
               ),
             );
           }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['error'] ?? 'Хатогӣ дар оғози пардохт'),
+              backgroundColor: Colors.red,
+            ),
+          );
         }
       } catch (e) {
         if (mounted) {
@@ -255,13 +263,11 @@
                     ),
                     const SizedBox(height: 12),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        _buildWalletLogo('img/wallet_2.webp'),
-                        _buildWalletLogo('img/wallet_3.webp'),
-                        _buildWalletLogo('img/wallet_5.webp'),
-                        _buildWalletLogo('img/wallet_4.webp'),
-                        _buildWalletLogo('img/wallet_6.webp'),
+                        _buildWalletLogo('assets/smartpay/alif.png'),
+                        _buildWalletLogo('assets/smartpay/eskhata.png'),
+                        _buildWalletLogo('assets/smartpay/dc.png'),
                       ],
                     ),
                     const SizedBox(height: 10),

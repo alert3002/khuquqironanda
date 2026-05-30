@@ -3,17 +3,18 @@ import 'dart:io' show Platform;
 import 'package:app/screens/balance_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../api/api_service.dart';
 import '../services/apple_iap_service.dart';
 import '../models/book_model.dart';
 import '../models/subscription_plan_model.dart';
 import '../models/user_model.dart';
-import 'about_screen.dart';
+import 'purchase_guide_screen.dart';
 import 'book_reader_screen.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
+import 'legal_documents_list_screen.dart';
+import 'document_pdf_screen.dart';
+import 'authors_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -25,7 +26,6 @@ class HomeScreen extends StatefulWidget {
 // Dashboard theme
 class _DashboardTheme {
   static const Color primary = Color(0xFF0D47A1);
-  static const Color primaryLight = Color(0xFF1565C0);
   static const Color accent = Color(0xFF00897B);
   static const Color surface = Color(0xFFF5F7FA);
   static const Color cardBg = Colors.white;
@@ -35,14 +35,15 @@ class _DashboardTheme {
 class _HomeScreenState extends State<HomeScreen> {
   Book? _book;
   bool _isLoading = true;
-  bool _isPurchasing = false;
+  bool _isRefreshing = false;
+  bool _backgroundSync = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadDataFast();
   }
 
   @override
@@ -51,43 +52,41 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  Future<void> _openTelegramContact() async {
-    final uri = Uri.parse('https://t.me/group1week');
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Telegram кушода нашуд.")),
-        );
-      }
+  /// Аввал кнопкаҳо аз кеш; навсозӣ дар пасзамина.
+  Future<void> _loadDataFast() async {
+    final cached = await ApiService.fetchTargetBookCached();
+    if (!mounted) return;
+    final validCache =
+        cached != null && !ApiService.isBundledSampleBook(cached);
+    setState(() {
+      _book = validCache ? cached : null;
+      _isLoading = !validCache;
+    });
+    if (validCache) {
+      _syncFromServer();
+    } else {
+      await _loadData();
     }
   }
 
-  void _showIOSContactAdminDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Обуна ва бобҳои иловагӣ"),
-        content: const Text(
-          "Дар версияи iOS пардохтҳо дар дохили барнома ғайрифаъоланд.\n\n"
-          "Барои пайваст кардани бобҳои иловагӣ ё гирифтани дастрасии пурра, "
-          "лутфан ба администратор дар Telegram муроҷиат намоед.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Бекор"),
-          ),
-          TextButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              _openTelegramContact();
-            },
-            icon: const Icon(Icons.send),
-            label: const Text("Telegram"),
-          ),
-        ],
-      ),
-    );
+  Future<void> _syncFromServer() async {
+    if (_backgroundSync) return;
+    _backgroundSync = true;
+    try {
+      final id = await ApiService.getSelectedBookId();
+      final fresh = await ApiService.getBookDetails(id);
+      if (!mounted) return;
+      if (fresh != null && !ApiService.isBundledSampleBook(fresh)) {
+        setState(() {
+          _book = fresh;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('⚠️ Background book sync: $e');
+    } finally {
+      _backgroundSync = false;
+    }
   }
 
   Future<void> _loadData() async {
@@ -127,12 +126,38 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _refreshBook() async {
-    await _loadData();
+    if (_isRefreshing) return;
+    setState(() => _isRefreshing = true);
+    try {
+      final id = await ApiService.getSelectedBookId();
+      final fresh = await ApiService.getBookDetails(id);
+      if (!mounted) return;
+      if (fresh != null && !ApiService.isBundledSampleBook(fresh)) {
+        setState(() {
+          _book = fresh;
+          _isLoading = false;
+        });
+      } else {
+        await _loadData();
+      }
+    } finally {
+      if (mounted) setState(() => _isRefreshing = false);
+    }
   }
 
   bool get _isGuest {
     try {
       return Hive.box('settings').get('is_guest', defaultValue: false) == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Бе токен профил пурра нест; мустақим ба экрани воридшавӣ мебарем.
+  bool get _hasAuthToken {
+    try {
+      final token = Hive.box('settings').get('token');
+      return token != null && token.toString().trim().isNotEmpty;
     } catch (_) {
       return false;
     }
@@ -251,7 +276,6 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      setState(() => _isPurchasing = true);
       try {
         final jws = await AppleIapService.instance.buyAndGetServerJws(pid);
         if (jws == null || jws.isEmpty) {
@@ -299,8 +323,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         }
-      } finally {
-        if (mounted) setState(() => _isPurchasing = false);
       }
       return;
     }
@@ -372,12 +394,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (confirm != true) return;
 
-    setState(() => _isPurchasing = true);
-
     try {
       Map<String, dynamic> result = await ApiService.purchaseBook(_book!.id, planId);
-
-      setState(() => _isPurchasing = false);
 
       if (result['success'] == true) {
         if (mounted) {
@@ -409,7 +427,6 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
     } catch (e) {
-      setState(() => _isPurchasing = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -498,9 +515,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return _sortedChapters.where((c) => c.title.toLowerCase().contains(q)).toList();
   }
 
-  int get _accessibleChaptersCount =>
-      _sortedChapters.where((c) => c.isFree || c.isPurchased).length;
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -545,26 +559,54 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.refresh_rounded, color: _DashboardTheme.primary, size: 26),
-                onPressed: _refreshBook,
+                icon: _isRefreshing
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded, color: _DashboardTheme.primary, size: 26),
+                onPressed: _isRefreshing ? null : _refreshBook,
                 tooltip: "Навсозӣ",
               ),
               IconButton(
-                icon: const Icon(Icons.info_outline_rounded, color: _DashboardTheme.primary, size: 26),
+                icon: const Icon(
+                  Icons.help_outline_rounded,
+                  color: _DashboardTheme.primary,
+                  size: 26,
+                ),
                 onPressed: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const AboutScreen()),
+                    MaterialPageRoute(
+                      builder: (context) => PurchaseGuideScreen(
+                        book: _book,
+                        onSubscribe: _book != null && _book!.plans.isNotEmpty
+                            ? () {
+                                Navigator.pop(context);
+                                _showSubscriptionPlans();
+                              }
+                            : null,
+                      ),
+                    ),
                   );
                 },
+                tooltip: 'Чӣ тавр харидан',
               ),
               IconButton(
                 icon: const Icon(Icons.person_rounded, color: _DashboardTheme.primary, size: 26),
                 onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const ProfileScreen()),
-                  );
+                  if (!_hasAuthToken) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const LoginScreen()),
+                    );
+                  } else {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const ProfileScreen()),
+                    );
+                  }
                 },
               ),
               const SizedBox(width: 10),
@@ -583,19 +625,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _buildProgressTracker(),
-                          const SizedBox(height: 20),
                           _buildQuickSearch(),
+                          const SizedBox(height: 24),
+                          _buildSectionTitle('Бобҳо'),
+                          const SizedBox(height: 12),
+                          _buildChaptersList(),
                           const SizedBox(height: 24),
                           _buildSectionTitle('Категорияҳо'),
                           const SizedBox(height: 12),
                           _buildCategoryCards(),
-                          const SizedBox(height: 24),
-                          _buildSectionTitle('Қонунҳои назариявӣ'),
-                          const SizedBox(height: 12),
-                          _buildSubscriptionBanner(),
-                          const SizedBox(height: 16),
-                          _buildChaptersList(),
                           const SizedBox(height: 24),
                         ],
                       ),
@@ -635,86 +673,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildProgressTracker() {
-    final total = _sortedChapters.length;
-    final accessible = _accessibleChaptersCount;
-    final progress = total > 0 ? accessible / total : 0.0;
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [_DashboardTheme.primary, _DashboardTheme.primaryLight],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
-        boxShadow: [
-          BoxShadow(
-            color: _DashboardTheme.primary.withOpacity(0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.trending_up, color: Colors.white, size: 28),
-              ),
-              const SizedBox(width: 16),
-              const Expanded(
-                child: Text(
-                  "Пайиравии пешравӣ",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Text(
-            "Дастрас: $accessible аз $total боб",
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.95),
-              fontSize: 15,
-            ),
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 8,
-              backgroundColor: Colors.white.withOpacity(0.3),
-              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-            ),
-          ),
-          if (_book!.isPurchased && _book!.expiresAt != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              "Обуна фаъол то ${DateFormat('dd.MM.yyyy').format(_book!.expiresAt!)}",
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.9),
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
   Widget _buildQuickSearch() {
     return Container(
       decoration: BoxDecoration(
@@ -732,7 +690,7 @@ class _HomeScreenState extends State<HomeScreen> {
         controller: _searchController,
         onChanged: (v) => setState(() => _searchQuery = v),
         decoration: InputDecoration(
-          hintText: "Ҷустуҷӯи мақолаҳо дар қонунҳо...",
+          hintText: "Ҷустуҷӯ",
           prefixIcon: const Icon(Icons.search_rounded, color: _DashboardTheme.primary),
           border: InputBorder.none,
           enabledBorder: OutlineInputBorder(
@@ -766,135 +724,57 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _CategoryCard(
             icon: Icons.gavel_rounded,
-            title: "Қонунҳои назариявӣ",
-            subtitle: "${_sortedChapters.length} боб",
+            title: "Қоидаҳои ҳаракат дар роҳ",
+            subtitle: "",
             color: const Color(0xFF1565C0),
-            onTap: () {},
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _CategoryCard(
-            icon: Icons.quiz_rounded,
-            title: "Тестҳои амалӣ",
-            subtitle: "Ба зудӣ",
-            color: const Color(0xFF00897B),
             onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Ба зудӣ дастрас мешавад.")),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const LegalDocumentsListScreen(),
+                ),
               );
             },
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _CategoryCard(
+            icon: Icons.quiz_rounded,
+            title: "Аломатҳо",
+            subtitle: "",
+            color: const Color(0xFF00897B),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const DocumentPdfScreen(
+                    title: 'Аломатҳо',
+                    assetPath: 'assets/traffic_rules/lomat.pdf',
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(width: 8),
         Expanded(
           child: _CategoryCard(
             icon: Icons.traffic_rounded,
-            title: "Аломатҳо",
-            subtitle: "Китобхона",
+            title: "Муаллифон",
+            subtitle: "",
             color: const Color(0xFF6A1B9A),
             onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Ба зудӣ дастрас мешавад.")),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AuthorsScreen(),
+                ),
               );
             },
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildSubscriptionBanner() {
-    if (_book!.isPurchased && _book!.expiresAt != null) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: _DashboardTheme.accent.withOpacity(0.12),
-          borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
-          border: Border.all(color: _DashboardTheme.accent.withOpacity(0.4)),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.check_circle_rounded, color: _DashboardTheme.accent, size: 28),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                "Обуна фаъол то ${DateFormat('dd.MM.yyyy').format(_book!.expiresAt!)}",
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF004D40),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: _isPurchasing
-            ? null
-            : () {
-                if (Platform.isIOS) {
-                  _showIOSContactAdminDialog();
-                } else {
-                  _showSubscriptionPlans();
-                }
-              },
-        borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: _DashboardTheme.primary.withOpacity(0.08),
-            borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
-            border: Border.all(color: _DashboardTheme.primary.withOpacity(0.3)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _DashboardTheme.primary.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(Icons.workspace_premium_rounded, color: _DashboardTheme.primary, size: 32),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Дастрасии пурра",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: _DashboardTheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "Обуна шавед барои ҳамаи мундариҷа",
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              _isPurchasing
-                  ? const SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.arrow_forward_ios, size: 18, color: _DashboardTheme.primary),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -989,50 +869,55 @@ class _CategoryCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+        borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
           decoration: BoxDecoration(
             color: _DashboardTheme.cardBg,
-            borderRadius: BorderRadius.circular(_DashboardTheme.cardRadius),
+            borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
               ),
             ],
           ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Container(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   color: color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(icon, color: color, size: 26),
+                child: Icon(icon, color: color, size: 20),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 6),
               Text(
                 title,
+                textAlign: TextAlign.center,
                 style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
                   color: Color(0xFF1A237E),
                 ),
-                maxLines: 2,
+                maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.grey[600],
+              if (subtitle.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey[600],
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:html/parser.dart' as html_parser;
 import 'package:html/dom.dart' as html_dom;
@@ -27,16 +28,17 @@ class BookReaderScreen extends StatefulWidget {
 }
 
 class _BookReaderScreenState extends State<BookReaderScreen> {
-  final PageController _pageController = PageController();
   final TextEditingController _searchController = TextEditingController();
   late List<PageContent> _pages;
   late List<PageContent> _originalPages;
-  int _currentPage = 0;
   List<int> _searchResults = [];
   String _searchQuery = ''; // Track search query for highlighting
   List<SearchResultSegment> _searchSegments = []; // Filtered segments when searching
   double _currentFontSize = 13.0; // Font size state variable
   Map<String, String> _authHeaders = {};
+  Timer? _searchDebounce;
+  bool _isPreparingContent = true;
+  List<String> _renderChunks = const [];
 
   @override
   void initState() {
@@ -49,6 +51,7 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
       _originalPages = _prepareSingleChapter(firstChapter.id);
     }
     _pages = _originalPages;
+    _prepareRenderChunks();
   }
 
   Future<void> _loadAuthHeaders() async {
@@ -66,8 +69,8 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
-    _pageController.dispose();
     super.dispose();
   }
 
@@ -79,85 +82,71 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
     if (!chapter.isFree && !chapter.isPurchased && !widget.book.isPurchased) {
       return [PageContent(chapter.title, '<p style="text-align:center; color:red;">Ин боб пулакӣ аст. Лутфан китобро харид кунед.</p>', chapterId)];
     }
-    return _splitIntoPages(chapter.content, chapter.title, chapter.id);
+    // Show full chapter in one block (no pagination like 1/24, 2/24).
+    return [PageContent(chapter.title, chapter.content, chapter.id)];
   }
 
-  List<PageContent> _splitIntoPages(String htmlContent, String chapterTitle, int chapterId) {
-    final normalizedContent = htmlContent
-        // Treat double <br> (with optional spaces) as page breaks
-        .replaceAll(
-          RegExp(r'(<br\s*/?>\s*){2,}', caseSensitive: false),
-          '\n<!--PAGEBREAK-->\n',
-        )
-        // Treat empty paragraphs from TinyMCE as page breaks
-        .replaceAll(
-          RegExp(
-            r'(<p[^>]*>\s*(?:&nbsp;|\s|<br\s*/?>)*\s*</p>\s*){1,}',
-            caseSensitive: false,
-          ),
-          '\n<!--PAGEBREAK-->\n',
-        );
-
-    if (normalizedContent.contains('<!--PAGEBREAK-->')) {
-      final parts = normalizedContent.split(
-        RegExp(r'<!--PAGEBREAK-->', caseSensitive: false),
-      );
-      final result = <PageContent>[];
-      for (final part in parts) {
-        final trimmed = part.trim();
-        if (trimmed.isEmpty) continue;
-        result.addAll(_splitIntoPagesWithoutHardBreak(trimmed, chapterTitle, chapterId));
-      }
-      return result.isEmpty
-          ? [PageContent(chapterTitle, '', chapterId)]
-          : result;
-    }
-
-    return _splitIntoPagesWithoutHardBreak(normalizedContent, chapterTitle, chapterId);
+  Future<void> _prepareRenderChunks() async {
+    setState(() {
+      _isPreparingContent = true;
+      _renderChunks = const [];
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+    final chunks = _splitHtmlIntoRenderChunks(_pages.first.content);
+    if (!mounted) return;
+    setState(() {
+      _renderChunks = chunks;
+      _isPreparingContent = false;
+    });
   }
 
-  List<PageContent> _splitIntoPagesWithoutHardBreak(
-    String htmlContent,
-    String chapterTitle,
-    int chapterId,
-  ) {
-    final pages = <PageContent>[];
+  List<String> _splitHtmlIntoRenderChunks(String htmlContent) {
     final document = html_parser.parse(htmlContent);
     final body = document.body;
-    if (body == null) return [PageContent(chapterTitle, '', chapterId)];
+    if (body == null) return [htmlContent];
 
-    final elements = body.nodes.whereType<html_dom.Element>().toList();
-    String currentPageHtml = '';
-    int currentPageLength = 0;
-    const int maxPageLength = 900;
+    final chunks = <String>[];
+    final buffer = StringBuffer();
+    var textLen = 0;
+    const maxChunkLen = 1200;
 
-    for (final element in elements) {
-      final elementHtml = element.outerHtml;
-      final elementLength = element.text.length;
+    for (final node in body.nodes.whereType<html_dom.Element>()) {
+      final fragment = node.outerHtml;
+      final nodeTextLen = node.text.trim().length;
+      final isHeavy = fragment.contains('<table') || fragment.contains('<img');
 
-      if (element.localName == 'table' || element.querySelectorAll('table').isNotEmpty) {
-        if (currentPageHtml.isNotEmpty) {
-          pages.add(PageContent(chapterTitle, currentPageHtml, chapterId));
-          currentPageHtml = '';
-          currentPageLength = 0;
+      if (isHeavy) {
+        if (buffer.isNotEmpty) {
+          chunks.add(buffer.toString());
+          buffer.clear();
+          textLen = 0;
         }
-        pages.add(PageContent(chapterTitle, elementHtml, chapterId));
+        chunks.add(fragment);
         continue;
       }
 
-      if (currentPageLength + elementLength > maxPageLength && currentPageLength > 0) {
-        pages.add(PageContent(chapterTitle, currentPageHtml, chapterId));
-        currentPageHtml = '';
-        currentPageLength = 0;
+      if (textLen > 0 && textLen + nodeTextLen > maxChunkLen) {
+        chunks.add(buffer.toString());
+        buffer.clear();
+        textLen = 0;
       }
-      currentPageHtml += elementHtml;
-      currentPageLength += elementLength;
+      buffer.write(fragment);
+      textLen += nodeTextLen;
     }
 
-    if (currentPageHtml.trim().isNotEmpty) {
-      pages.add(PageContent(chapterTitle, currentPageHtml, chapterId));
+    if (buffer.isNotEmpty) {
+      chunks.add(buffer.toString());
     }
-    return pages;
+    return chunks.isEmpty ? [htmlContent] : chunks;
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (mounted) {
+        _performSearch(value);
+      }
+    });
   }
 
   void _performSearch(String query) {
@@ -205,21 +194,21 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF2d2d2d),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF2d2d2d),
+        backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: const IconThemeData(color: Colors.black),
         title: _pages.isNotEmpty
             ? Text(
-                _pages[_currentPage].chapterTitle,
+                _pages.first.chapterTitle,
                 maxLines: 2,
                 softWrap: true,
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: Colors.black,
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                 ),
@@ -228,7 +217,7 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
         actions: [
           // Font size decrease button
           IconButton(
-            icon: const Icon(Icons.remove, color: Colors.white),
+            icon: const Icon(Icons.remove, color: Colors.black),
             onPressed: () {
               setState(() {
                 if (_currentFontSize > 10) {
@@ -240,7 +229,7 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
           ),
           // Font size increase button
           IconButton(
-            icon: const Icon(Icons.add, color: Colors.white),
+            icon: const Icon(Icons.add, color: Colors.black),
             onPressed: () {
               setState(() {
                 if (_currentFontSize < 25) {
@@ -259,41 +248,36 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
             padding: const EdgeInsets.all(8.0),
             child: TextField(
               controller: _searchController,
-              style: const TextStyle(color: Colors.white),
+              style: const TextStyle(color: Colors.black87),
               decoration: InputDecoration(
                 hintText: "Ҷустуҷӯ...",
                 hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Colors.white),
+                prefixIcon: const Icon(Icons.search, color: Colors.black54),
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(
-                        icon: const Icon(Icons.clear, color: Colors.white),
+                        icon: const Icon(Icons.clear, color: Colors.black54),
                         onPressed: () {
+                          _searchDebounce?.cancel();
                           _searchController.clear();
                           _performSearch('');
                         },
                       )
                     : null,
-                fillColor: Colors.white10,
+                fillColor: const Color(0xFFF2F2F2),
                 filled: true,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
               ),
-              onChanged: _performSearch,
+              onChanged: _onSearchChanged,
             ),
           ),
           Expanded(
             child: _searchQuery.isNotEmpty
                 ? _buildSearchResults()
-                : PageView.builder(
-                    controller: _pageController,
-                    scrollDirection: Axis.horizontal,
-                    reverse: false,
-                    onPageChanged: (index) {
-                      setState(() => _currentPage = index);
-                    },
-                    itemCount: _pages.length,
-                    itemBuilder: (context, index) {
-                      return _buildPage(_pages[index], index);
-                    },
+                : ListView(
+                    padding: EdgeInsets.zero,
+                    children: [
+                      _buildPage(_pages.first, 0),
+                    ],
                   ),
           ),
         ],
@@ -314,36 +298,42 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
       ),
       child: Column(
         children: [
-          Expanded(
-            child: SingleChildScrollView(
-              child: _searchQuery.isNotEmpty && _searchResults.contains(index)
-                  ? _buildHighlightedContent(page.content, _searchQuery)
-                  : HtmlWidget(
-                      _wrapTablesInScrollableDivs(page.content),
-                      textStyle: TextStyle(
-                        fontSize: _currentFontSize, // Link font size to state variable
-                        height: 1.15, // Line height remains consistent
-                        color: Colors.black87,
-                      ),
-                      customStylesBuilder: _buildHtmlStyles,
-                      customWidgetBuilder: _buildHtmlWidget,
-                      onTapUrl: (url) => _handleUrlTap(url),
-                    ),
-            ),
-          ),
-          const SizedBox(height: 5),
-          if (index == _pages.length - 1)
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-              ),
-              child: const Text("Анҷом", style: TextStyle(color: Colors.white, fontSize: 12)),
-            )
+          if (_isPreparingContent)
+            _buildLoadingSkeleton()
+          else if (_searchQuery.isNotEmpty && _searchResults.contains(index))
+            _buildHighlightedContent(page.content, _searchQuery)
           else
-            Text("${index + 1} / ${_pages.length}", style: const TextStyle(color: Colors.grey, fontSize: 10)),
+            ..._renderChunks.map(
+              (chunk) => HtmlWidget(
+                _wrapTablesInScrollableDivs(chunk),
+                textStyle: TextStyle(
+                  fontSize: _currentFontSize,
+                  height: 1.15,
+                  color: Colors.black87,
+                ),
+                customStylesBuilder: _buildHtmlStyles,
+                customWidgetBuilder: _buildHtmlWidget,
+                onTapUrl: (url) => _handleUrlTap(url),
+              ),
+            ),
+          const SizedBox(height: 5),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingSkeleton() {
+    return Column(
+      children: List.generate(
+        4,
+        (i) => Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          height: i == 0 ? 24 : 16,
+          decoration: BoxDecoration(
+            color: const Color(0xFFE9E9E9),
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
       ),
     );
   }
@@ -401,6 +391,9 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
           normalized,
           headers: useAuth ? _authHeaders : null,
           fit: BoxFit.contain,
+          filterQuality: FilterQuality.low,
+          cacheWidth: width != null ? (width * 2).round() : 1200,
+          cacheHeight: height != null ? (height * 2).round() : null,
           errorBuilder: (context, error, stackTrace) {
             return const SizedBox.shrink();
           },

@@ -4,6 +4,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../api/api_service.dart';
 import 'verify_code_screen.dart';
 import 'home_screen.dart';
+import '../services/telegram_auth_launcher.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -16,6 +17,39 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _phoneController = TextEditingController();
 
   bool _isLoading = false; // Оё ҳозир боргирӣ рафта истодааст?
+
+  Future<void> _onTelegramPressed() async {
+    setState(() => _isLoading = true);
+
+    final result = await TelegramAuthLauncher.signIn();
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (result.token != null && result.token!.isNotEmpty) {
+      final deviceId = await ApiService.getDeviceId();
+      final box = Hive.box('settings');
+      await box.put('token', result.token);
+      await box.put('device_id', deviceId);
+      await box.put('login_date', DateTime.now().toIso8601String());
+      await box.delete('is_guest');
+
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
+        (_) => false,
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.error ?? 'Воридшавӣ бекор шуд'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
 
   void _onContinueAsGuest() {
     var box = Hive.box('settings');
@@ -156,7 +190,28 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: _isLoading ? null : _onTelegramPressed,
+                  icon: const Icon(Icons.telegram, size: 22),
+                  label: const Text(
+                    'Воридшавӣ тавассути Telegram',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0088CC),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 height: 50,
