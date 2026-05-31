@@ -2,27 +2,40 @@ workflows:
   default-workflow:
     name: Default Workflow
     max_build_duration: 90
+    instance_type: mac_mini_m2
+    working_directory: app
     integrations:
       app_store_connect: huquqironanda
     environment:
       flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: tj.book.books
     scripts:
-      - name: Set up code signing
+      - name: Fetch certificates and profiles
         script: |
-          cd app
           keychain initialize
-          app-store-connect fetch-signing-files "tj.book.books" \
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
           keychain add-certificates
-          xcode-project use-profiles
-      - name: Build iOS IPA
+          security find-identity -v -p codesigning
+      - name: Apply signing to Xcode project
         script: |
-          cd app
+          xcode-project use-profiles --project ios/Runner.xcodeproj
+      - name: Install dependencies
+        script: |
           flutter pub get
-          flutter build ipa --release
+          find . -name "Podfile" -execdir pod install \;
+      - name: Build IPA
+        script: |
+          flutter build ios --release --no-codesign
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme Runner
     artifacts:
-      - app/build/ios/ipa/*.ipa
+      - build/ios/ipa/*.ipa
     publishing:
       app_store_connect:
         auth: integration
