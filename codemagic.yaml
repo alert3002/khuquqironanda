@@ -15,18 +15,21 @@ workflows:
     scripts:
       - name: Load team certificate into keychain
         script: |
-          set -e
           keychain initialize
-          keychain add-certificates
-          echo "=== Certificates in keychain ==="
-          security find-identity -v -p codesigning || true
-          if ! security find-identity -v -p codesigning | grep -q "Apple Distribution"; then
+          if ! keychain add-certificates; then
             echo ""
-            echo "ERROR: Сертификат дар Codemagic Team нест."
-            echo "→ Codemagic → Team settings → Code signing identities → Generate certificate"
-            echo "→ Apple Developer → Revoke iOS Distribution-ҳои кӯҳна"
+            echo "=========================================="
+            echo "ERROR: Сертификат (.p12) дар Codemagic НЕСТ"
+            echo "=========================================="
+            echo "1. codemagic.io → Teams → [team name]"
+            echo "2. Code signing identities → iOS"
+            echo "3. Generate certificate (App Store Distribution)"
+            echo "   ё Upload .p12 + password"
+            echo "4. Apple Developer → Revoke iOS Distribution-ҳои кӯҳна"
+            echo "=========================================="
             exit 1
           fi
+          security find-identity -v -p codesigning
       - name: Fetch provisioning profile
         script: |
           set -e
