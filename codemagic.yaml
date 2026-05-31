@@ -1,0 +1,45 @@
+workflows:
+  ios-release:
+    name: iOS Release IPA
+    max_build_duration: 90
+    integrations:
+      app_store_connect: codemagic
+    environment:
+      flutter: stable
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.khuquqironanda.week
+    scripts:
+      - name: Install dependencies
+        script: |
+          cd app
+          flutter pub get
+      - name: Set up code signing
+        script: |
+          cd app
+          keychain initialize
+          app-store-connect fetch-signing-files "com.khuquqironanda.week" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build IPA
+        script: |
+          cd app
+          flutter build ipa --release
+    artifacts:
+      - app/build/ios/ipa/*.ipa
+
+  android-release:
+    name: Android Release AAB
+    max_build_duration: 60
+    environment:
+      flutter: stable
+    scripts:
+      - name: Build AAB
+        script: |
+          cd app
+          flutter pub get
+          flutter build appbundle --release
+    artifacts:
+      - app/build/app/outputs/bundle/release/app-release.aab
