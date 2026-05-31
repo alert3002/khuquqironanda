@@ -17,9 +17,9 @@ workflows:
         script: |
           set -e
           keychain initialize
+          # Бе --create: сертификати Codemagic Team (бо private key) истифода мешавад
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE \
-            --create
+            --type IOS_APP_STORE
           keychain add-certificates
           security find-identity -v -p codesigning
           ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" || true

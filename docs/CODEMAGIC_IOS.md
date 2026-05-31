@@ -26,18 +26,21 @@ No valid code signing certificates were found
 **App Store Connect API key** (.p8) бояд илова шуда бошад.
 
 ### 3. Team settings → Code signing identities → iOS
-- **Generate certificate** (App Store Distribution)
-- ё **Fetch certificate** (агар expired шуда бошад)
+1. **Revoke** сертификатҳои кӯҳна (агar error: `Cannot save Signing Certificates without certificate private key`)
+2. Дар [developer.apple.com](https://developer.apple.com) → Certificates → iOS Distribution-ҳои кӯҳна → **Revoke**
+3. Бозгашт ба Codemagic → **Generate certificate** (App Store Distribution)
+4. Ин сертификат бо **private key** дар Codemagic нигоҳ дошта мешавад
 
-### 4. Build scripts (2 қадам — муҳим!)
+⚠️ Дар script **`--create` истифода накунед** — он бо сертификати Xcode conflict медиҳад.
+
+### 4. Build scripts (yaml workflow — худаш иҷро мешавад)
 
 **Script 1 — Code signing** (пеш аз build):
 ```bash
 cd app
 keychain initialize
 app-store-connect fetch-signing-files "tj.book.books" \
-  --type IOS_APP_STORE \
-  --create
+  --type IOS_APP_STORE
 keychain add-certificates
 xcode-project use-profiles
 ```
