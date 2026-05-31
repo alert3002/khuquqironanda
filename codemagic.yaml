@@ -10,59 +10,13 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
-      vars:
-        BUNDLE_ID: tj.book.books
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: tj.book.books
     scripts:
-      - name: Fetch signing files
+      - name: Apply code signing to Xcode
         script: |
-          set -e
-          keychain initialize
-          # Бе --create: сертификати Codemagic Team (бо private key) истифода мешавад
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE
-          keychain add-certificates
-          security find-identity -v -p codesigning
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" || true
-      - name: Apply profiles and export options
-        script: |
-          set -e
           xcode-project use-profiles --project ios/Runner.xcodeproj
-
-          PROFILE_FILE=""
-          for f in "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision; do
-            [ -f "$f" ] || continue
-            if security cms -D -i "$f" 2>/dev/null | grep -q "$BUNDLE_ID"; then
-              PROFILE_FILE="$f"
-              break
-            fi
-          done
-          if [ -z "$PROFILE_FILE" ]; then
-            echo "ERROR: No provisioning profile for $BUNDLE_ID"
-            exit 1
-          fi
-          PROFILE_NAME=$(security cms -D -i "$PROFILE_FILE" | plutil -extract Name raw -)
-          cat > "$HOME/export_options.plist" << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>$BUNDLE_ID</key>
-              <string>$PROFILE_NAME</string>
-            </dict>
-            <key>signingCertificate</key>
-            <string>Apple Distribution</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>uploadSymbols</key>
-            <true/>
-          </dict>
-          </plist>
-          PLIST
-          echo "Profile: $PROFILE_NAME"
       - name: Install dependencies
         script: |
           flutter pub get
