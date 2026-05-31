@@ -1,52 +1,73 @@
-# Codemagic iOS — ҳалли хатои private key
+# Codemagic iOS — як маротиба инро анҷом диҳед
 
-## Хато
-```
-Cannot save Signing Certificates without certificate private key
-```
+## 3 хато, 3 ҳал
 
-**Сабаб:** сертификат дар Apple (Xcode/Mac) сохта шуда, private key дар Codemagic нест.
-`fetch-signing-files` аз Apple API сертификат бе private key мегирад → fail.
+| Хато | Ҳал |
+|------|-----|
+| `No matching profiles` | Profile дар Apple нест → қадами 3 |
+| `No private key` | Сертификат дар Xcode/Mac → қадами 1-2 |
+| `requires provisioning profile` | Profile ба Xcode татбиқ нашуд → yaml нав |
 
 ---
 
-## Ҳал (як маротиба — бе ин build намешавад)
+## ҚАДАМ 1 — Apple Developer (5 дақиқа)
 
-### 1. Apple Developer
-[developer.apple.com](https://developer.apple.com) → **Certificates**
+[developer.apple.com/account/resources/certificates/list](https://developer.apple.com/account/resources/certificates/list)
 
-- **iOS Distribution**-ҳои кӯҳна → **Revoke** (ҳама, агар Codemagic истифода намекунад)
+1. **Certificates** → **iOS Distribution**-ҳои кӯҳна → **Revoke**
+2. **Identifiers** → бояд **`tj.book.books`** бошад (агar не → **+** → App IDs → `tj.book.books`)
 
-### 2. Codemagic Team settings
-**Teams** → **Code signing identities** → **iOS**
+---
+
+## ҚАДАМ 2 — Codemagic Team (2 дақиқа)
+
+[codemagic.io](https://codemagic.io) → **Teams** → **Code signing identities** → **iOS**
 
 1. Сертификатҳои кӯҳна → **Remove**
 2. **Generate certificate** → App Store Distribution
-3. Ин сертификат **бо private key** дар Codemagic нигоҳ дошта мешавад
-
-### 3. Codemagic App settings
-**Distribution** → **iOS code signing**
-
-| Танзим | Қимат |
-|--------|--------|
-| Automatic | On |
-| API key | huquqironanda |
-| App Store | ✅ |
-| Bundle ID | Khuquqi Ronanda / tj.book.books |
-
-**Save**
-
-### 4. Build
-**Start new build** → Default Workflow → `main`
-
-yaml **бе `fetch-signing-files`** — танҳо сертификати Codemagic Team.
+3. ✅ Private key дар Codemagic нигоҳ дошта мешавад
 
 ---
 
-## Bundle ID
-- iOS: `tj.book.books`
-- Android: `com.khuquqironanda.week`
-- Flutter project: папка `app/`
+## ҚАДАМ 3 — Provisioning Profile (3 дақиқа)
 
-## Build number
-TestFlight охирин: **24** → дар `app/pubspec.yaml` бояд **+25** ё болотар.
+[developer.apple.com/account/resources/profiles/list](https://developer.apple.com/account/resources/profiles/list)
+
+1. **+** → **App Store Connect**
+2. App ID: **tj.book.books**
+3. Certificate: сертификати нав (қадами 2)
+4. **Generate** → Download (ихтиёрӣ)
+
+---
+
+## ҚАДАМ 4 — Build
+
+Codemagic → **Start new build** → **Default Workflow** → `main`
+
+---
+
+## Дар log бояд бинед
+
+```
+Load team certificate → Apple Distribution ✅
+Fetch provisioning profile ✅
+Profile: [ном] ✅
+Build IPA ✅
+```
+
+---
+
+## Distribution (Visual) — тағйир надиҳед
+
+Automatic + huquqironanda + App Store + Khuquqi Ronanda ✅
+
+---
+
+## Android (локалӣ)
+
+```powershell
+cd C:\Users\ALIJOn\Desktop\books\app
+flutter build appbundle --release
+```
+
+Bundle ID Android: `com.khuquqironanda.week`

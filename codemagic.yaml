@@ -10,20 +10,75 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: tj.book.books
+      vars:
+        BUNDLE_ID: tj.book.books
     scripts:
-      - name: Apply code signing to Xcode
+      - name: Load team certificate into keychain
         script: |
+          set -e
+          keychain initialize
+          keychain add-certificates
+          echo "=== Certificates in keychain ==="
+          security find-identity -v -p codesigning || true
+          if ! security find-identity -v -p codesigning | grep -q "Apple Distribution"; then
+            echo ""
+            echo "ERROR: Сертификат дар Codemagic Team нест."
+            echo "→ Codemagic → Team settings → Code signing identities → Generate certificate"
+            echo "→ Apple Developer → Revoke iOS Distribution-ҳои кӯҳна"
+            exit 1
+          fi
+      - name: Fetch provisioning profile
+        script: |
+          set -e
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" || true
+      - name: Apply signing to Xcode
+        script: |
+          set -e
           xcode-project use-profiles --project ios/Runner.xcodeproj
-      - name: Install dependencies
+          PROFILE_FILE=""
+          for f in "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision; do
+            [ -f "$f" ] || continue
+            if security cms -D -i "$f" 2>/dev/null | grep -q "$BUNDLE_ID"; then
+              PROFILE_FILE="$f"
+              break
+            fi
+          done
+          if [ -z "$PROFILE_FILE" ]; then
+            echo "ERROR: Profile барои $BUNDLE_ID нест."
+            echo "→ developer.apple.com → Profiles → + → App Store → tj.book.books"
+            exit 1
+          fi
+          PROFILE_NAME=$(security cms -D -i "$PROFILE_FILE" | plutil -extract Name raw -)
+          cat > "$HOME/export_options.plist" << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$BUNDLE_ID</key>
+              <string>$PROFILE_NAME</string>
+            </dict>
+            <key>signingCertificate</key>
+            <string>Apple Distribution</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          echo "Profile: $PROFILE_NAME"
+      - name: Install and build
         script: |
+          set -e
           flutter pub get
           find . -name "Podfile" -execdir pod install \;
           xcode-project use-profiles --project ios/Runner.xcodeproj
-      - name: Build IPA
-        script: |
           flutter build ipa --release \
             --export-options-plist="$HOME/export_options.plist"
     artifacts:
