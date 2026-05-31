@@ -50,7 +50,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.khuquqironanda.week</string>
+			<string>tj.book.books</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>khuquqironanda</string>

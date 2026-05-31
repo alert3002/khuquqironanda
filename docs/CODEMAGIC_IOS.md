@@ -16,7 +16,7 @@ No valid code signing certificates were found
 |--------|--------|
 | Code signing | **On** / Automatic |
 | Distribution type | **App Store** |
-| Bundle identifier | `com.khuquqironanda.week` |
+| Bundle identifier | `tj.book.books` |
 
 ### 2. Team settings → Integrations
 **App Store Connect API key** (.p8) бояд илова шуда бошад.
@@ -31,7 +31,7 @@ No valid code signing certificates were found
 ```bash
 cd app
 keychain initialize
-app-store-connect fetch-signing-files "com.khuquqironanda.week" \
+app-store-connect fetch-signing-files "tj.book.books" \
   --type IOS_APP_STORE \
   --create
 keychain add-certificates
