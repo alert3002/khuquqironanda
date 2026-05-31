@@ -10,10 +10,13 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: tj.book.books
       vars:
         BUNDLE_ID: tj.book.books
     scripts:
-      - name: Fetch certificates and profiles
+      - name: Fetch signing files
         script: |
           keychain initialize
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
@@ -21,19 +24,21 @@ workflows:
             --create
           keychain add-certificates
           security find-identity -v -p codesigning
-      - name: Apply signing to Xcode project
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" || true
+      - name: Apply profiles to Xcode
         script: |
           xcode-project use-profiles --project ios/Runner.xcodeproj
+          grep -E "DEVELOPMENT_TEAM|PROVISIONING_PROFILE|CODE_SIGN" \
+            ios/Runner.xcodeproj/project.pbxproj | head -30 || true
       - name: Install dependencies
         script: |
           flutter pub get
           find . -name "Podfile" -execdir pod install \;
       - name: Build IPA
         script: |
-          flutter build ios --release --no-codesign
-          xcode-project build-ipa \
-            --workspace ios/Runner.xcworkspace \
-            --scheme Runner
+          flutter build ipa --release \
+            --export-method app-store \
+            --export-options-plist="$HOME/export_options.plist"
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
