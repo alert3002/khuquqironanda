@@ -7,6 +7,10 @@ No valid code signing certificates were found
 Ин дар **Codemagic → Code signing**, на дар git.  
 `win32_registry`, `xml`, SPM — warning, build-ро вайрон намекунанд.
 
+## Мушкил 2 — build аз реша, на аз app/
+Агар дар log бинед `Archiving com.khuquqironanda.week...` — Codemagic папкаи `app/`-ро намехонад.
+Дар script **`cd app`** зарур аст.
+
 ---
 
 ## Workflow-и Visual (монанди версияи 1)

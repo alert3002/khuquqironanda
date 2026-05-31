@@ -1,0 +1,32 @@
+workflows:
+  default-workflow:
+    name: Default Workflow
+    max_build_duration: 90
+    integrations:
+      app_store_connect: codemagic
+    environment:
+      flutter: stable
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: tj.book.books
+    scripts:
+      - name: Set up code signing
+        script: |
+          cd app
+          keychain initialize
+          app-store-connect fetch-signing-files "tj.book.books" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build iOS IPA
+        script: |
+          cd app
+          flutter pub get
+          flutter build ipa --release
+    artifacts:
+      - app/build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
