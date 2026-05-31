@@ -6,9 +6,6 @@ workflows:
       app_store_connect: huquqironanda
     environment:
       flutter: stable
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: tj.book.books
     scripts:
       - name: Set up code signing
         script: |
