@@ -1,65 +1,59 @@
-# Codemagic iOS — як маротиба инро анҷом диҳед
+# Codemagic iOS — Visual Workflow (монанди версияи 1)
 
-## 3 хато, 3 ҳал
+## ⚠️ codemagic.yaml НЕст — Visual workflow истифода баред
 
-| Хато | Ҳал |
-|------|-----|
-| `No matching profiles` | Profile дар Apple нест → қадами 3 |
-| `No private key` | Сертификат дар Xcode/Mac → қадами 1-2 |
-| `requires provisioning profile` | Profile ба Xcode татбиқ нашуд → yaml нав |
+yaml workflow `.p12` сертификат мехоҳад. TestFlight версияи 1 бо **Visual + Automatic** кор карда буд.
 
 ---
 
-## ҚАДАМ 1 — Apple Developer (5 дақиқа)
+## Танзимот (Codemagic UI)
 
-[developer.apple.com/account/resources/certificates/list](https://developer.apple.com/account/resources/certificates/list)
+### 1. Workflow-и Visual (на yaml!)
+App → **Workflow Editor** → **Default Workflow** (Visual)
 
-1. **Certificates** → **iOS Distribution**-ҳои кӯҳна → **Revoke**
-2. **Identifiers** → бояд **`tj.book.books`** бошад (агar не → **+** → App IDs → `tj.book.books`)
+### 2. Distribution → iOS code signing
+| | |
+|--|--|
+| Automatic | ✅ On |
+| API key | huquqironanda |
+| App Store | ✅ |
+| Bundle ID | Khuquqi Ronanda (tj.book.books) |
 
----
+### 3. Build scripts — ТАНHО ин як script
 
-## ҚАДАМ 2 — Codemagic Team (2 дақиқа)
+**Script-ҳои keychain / fetch-signing-files-ро DELETE кунед.**
 
-[codemagic.io](https://codemagic.io) → **Teams** → **Code signing identities** → **iOS**
+```bash
+cd app
+flutter pub get
+flutter build ipa --release
+```
 
-1. Сертификатҳои кӯҳна → **Remove**
-2. **Generate certificate** → App Store Distribution
-3. ✅ Private key дар Codemagic нигоҳ дошта мешавад
+### 4. Flutter project path (агar бошад)
+**Build** → Flutter project directory: **`app`**
 
----
-
-## ҚАДАМ 3 — Provisioning Profile (3 дақиқа)
-
-[developer.apple.com/account/resources/profiles/list](https://developer.apple.com/account/resources/profiles/list)
-
-1. **+** → **App Store Connect**
-2. App ID: **tj.book.books**
-3. Certificate: сертификати нав (қадами 2)
-4. **Generate** → Download (ихтиёрӣ)
-
----
-
-## ҚАДАМ 4 — Build
-
-Codemagic → **Start new build** → **Default Workflow** → `main`
+### 5. Start build → main
 
 ---
 
 ## Дар log бояд бинед
 
 ```
-Load team certificate → Apple Distribution ✅
-Fetch provisioning profile ✅
-Profile: [ном] ✅
-Build IPA ✅
+Building tj.book.books...
+Archiving tj.book.books...
 ```
+
+**НЕ** `com.khuquqironanda.week`
 
 ---
 
-## Distribution (Visual) — тағйир надиҳед
+## Build number
 
-Automatic + huquqironanda + App Store + Khuquqi Ronanda ✅
+TestFlight охирин: **24** → `app/pubspec.yaml`:
+
+```yaml
+version: 2.1.2+25
+```
 
 ---
 
@@ -70,4 +64,10 @@ cd C:\Users\ALIJOn\Desktop\books\app
 flutter build appbundle --release
 ```
 
-Bundle ID Android: `com.khuquqironanda.week`
+---
+
+## Агар Visual workflow боз fail шавад
+
+**Teams** → **Code signing identities** → **iOS** → **Generate certificate**
+
+Баъд Distribution Automatic-ро такрор санҷед.
