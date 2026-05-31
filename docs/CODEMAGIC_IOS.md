@@ -1,36 +1,70 @@
-# Codemagic iOS — дастури ислоҳ
+# Codemagic iOS — Workflow UI (бе codemagic.yaml)
 
 ## Мушкил
 ```
 No valid code signing certificates were found
 ```
-Ин **хато дар Codemagic/Apple**, на дар git. Файлҳои SmartPay аллакай дар GitHub ҳастанд.
+Ин дар **Codemagic → Code signing**, на дар git.  
+`win32_registry`, `xml`, SPM — warning, build-ро вайрон намекунанд.
 
-## Workflow-и дуруст
-❌ Visual / Default workflow — signing намекунад  
-✅ **iOS Release IPA** (аз `codemagic.yaml`)
+---
 
-## Қадамҳо дар Codemagic
+## Workflow-и Visual (монанди версияи 1)
 
-### 1. App Store Connect API Key
-Team settings → Integrations → App Store Connect:
-- Issuer ID
-- Key ID  
-- Private key (.p8)
+### 1. Distribution → iOS code signing
+| Танзим | Қимат |
+|--------|--------|
+| Code signing | **On** / Automatic |
+| Distribution type | **App Store** |
+| Bundle identifier | `com.khuquqironanda.week` |
 
-### 2. Certificate
-Team settings → Code signing identities → iOS:
+### 2. Team settings → Integrations
+**App Store Connect API key** (.p8) бояд илова шуда бошад.
+
+### 3. Team settings → Code signing identities → iOS
 - **Generate certificate** (App Store Distribution)
-- Bundle ID: `com.khuquqironanda.week`
+- ё **Fetch certificate** (агар expired шуда бошад)
 
-### 3. Integration name
-Агар ном `codemagic` нест, дар `codemagic.yaml` иваз кунед:
-```yaml
-app_store_connect: НОМИ_ШУМО
+### 4. Build scripts (2 қадам — муҳим!)
+
+**Script 1 — Code signing** (пеш аз build):
+```bash
+cd app
+keychain initialize
+app-store-connect fetch-signing-files "com.khuquqironanda.week" \
+  --type IOS_APP_STORE \
+  --create
+keychain add-certificates
+xcode-project use-profiles
 ```
 
-### 4. Build
-Start new build → workflow **iOS Release IPA** → branch `main`
+**Script 2 — Build IPA**:
+```bash
+cd app
+flutter pub get
+flutter build ipa --release
+```
+
+⚠️ **`cd app` зарур аст** — Flutter дар папкаи `app/`, на дар реша.
+
+### 5. Start build
+Workflow-и **Visual** → branch `main` → Start.
+
+---
 
 ## Git
-Агар `nothing to commit` — ҳама чиз аллакай push шуда. Ин хуб аст.
+```powershell
+cd C:\Users\ALIJOn\Desktop\books
+git add .
+git commit -m "Your message"
+git push origin main
+```
+Агар `nothing to commit` — ҳама аллакай дар GitHub аст.
+
+---
+
+## Android (локалӣ)
+```powershell
+cd C:\Users\ALIJOn\Desktop\books\app
+flutter build appbundle --release
+```
