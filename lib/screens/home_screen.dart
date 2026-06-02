@@ -1,5 +1,3 @@
-import 'dart:io' show Platform;
-
 import 'package:app/screens/balance_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -194,10 +192,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Нишон додани нақшаҳои обуна
   void _showSubscriptionPlans() async {
-    if (Platform.isIOS) {
-      _showIOSContactAdminDialog();
-      return;
-    }
     if (_isGuest) {
       _showSignInRequiredDialog();
       return;
@@ -245,19 +239,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _buyBook() {
-    if (Platform.isIOS) {
-      _showIOSContactAdminDialog();
-      return;
-    }
     _showSubscriptionOptions();
   }
 
   // Иҷрои хариди обуна
   Future<void> _processSubscription(int planId) async {
-    if (Platform.isIOS) {
-      _showIOSContactAdminDialog();
-      return;
-    }
     if (_book == null) return;
     if (_isGuest) {
       _showSignInRequiredDialog();

@@ -1,5 +1,3 @@
-import 'dart:io' show Platform;
-
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../api/api_service.dart';
@@ -271,10 +269,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _openBalanceScreen() {
-    if (Platform.isIOS) {
-      _showIOSContactAdminDialog();
-      return;
-    }
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const BalanceScreen()),
