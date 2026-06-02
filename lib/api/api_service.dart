@@ -826,6 +826,7 @@ class ApiService {
   static Future<Map<String, dynamic>> initSmartpayPayment(
     double amount, {
     String? description,
+    int? bankId,
   }) async {
     try {
       final response = await http.post(
@@ -835,14 +836,16 @@ class ApiService {
           'amount': amount.toStringAsFixed(2),
           if (description != null && description.isNotEmpty)
             'description': description,
+          if (bankId != null) 'bank_id': bankId,
         }),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         return {
-          'success': true,
+          'success': data['success'] ?? true,
           'payment_link': data['payment_link'],
+          'deeplink_url': data['deeplink_url'],
           'html_form': data['html_form'],
           'order_id': data['order_id'],
         };
@@ -855,6 +858,23 @@ class ApiService {
       }
     } catch (e) {
       return {'success': false, 'error': 'Хатогии пайвастшавӣ: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> checkSmartpayStatus(String orderId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/payment/smartpay/status/?order_id=$orderId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map,
+        );
+      }
+      return {'status': 'unknown'};
+    } catch (e) {
+      return {'status': 'unknown', 'error': e.toString()};
     }
   }
 

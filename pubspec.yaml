@@ -1,7 +1,7 @@
 name: app
 description: "A new Flutter project."
 publish_to: 'none' 
-version: 3.3.4+4
+version: 3.4.4+4
 
 environment:
   sdk: ^3.10.1
@@ -32,6 +32,7 @@ dependencies:
   device_info_plus: ^10.1.0
   permission_handler: ^11.3.1
   font_awesome_flutter: ^11.0.0
+  google_fonts: ^8.1.0
 
 dev_dependencies:
   flutter_test:

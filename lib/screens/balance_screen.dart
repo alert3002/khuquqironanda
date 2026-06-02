@@ -2,8 +2,10 @@
   import 'package:url_launcher/url_launcher.dart';
   import '../api/api_service.dart';
   import '../models/user_model.dart';
+  import '../utils/region_utils.dart';
   import 'payment_webview.dart';
   import 'payment_history_screen.dart';
+  import 'smartpay_payment_screen.dart';
 
   class BalanceScreen extends StatefulWidget {
     final double? initialAmount;
@@ -82,7 +84,7 @@
         return;
       }
 
-      final amount = double.tryParse(amountText);
+      final amount = double.tryParse(amountText.replaceAll(',', '.'));
       if (amount == null || amount <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Маблағи нодуруст')),
@@ -90,11 +92,26 @@
         return;
       }
 
-      await _processPayment(amount);
+      if (isTajikistanUser(_user)) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => SmartPayPaymentScreen(
+              initialAmount: amount,
+              paymentDescription: widget.paymentDescription,
+              user: _user,
+            ),
+          ),
+        );
+        await _loadUserProfile();
+        return;
+      }
+
+      await _processPaymentLegacy(amount);
     }
 
-    // Умумии функсия барои иҷрои пардохт
-    Future<void> _processPayment(
+    // Legacy web flow (for non-TJ only)
+    Future<void> _processPaymentLegacy(
       double amount,
     ) async {
       showDialog(
@@ -116,12 +133,18 @@
         }
 
         final balanceBefore = _user?.balance;
-        if (result['success'] == true && result['html_form'] != null) {
+        final htmlForm = result['html_form']?.toString();
+        final paymentLink = result['payment_link']?.toString();
+        if (result['success'] == true &&
+            ((htmlForm != null && htmlForm.isNotEmpty) ||
+                (paymentLink != null && paymentLink.isNotEmpty))) {
           final paymentResult = await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => PaymentWebView(
-                htmlForm: result['html_form'],
+                htmlForm: htmlForm ?? '',
+                paymentUrl:
+                    (htmlForm == null || htmlForm.isEmpty) ? paymentLink : null,
               ),
             ),
           );

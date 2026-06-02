@@ -12,10 +12,12 @@ enum PaymentResultStatus {
 
 class PaymentWebView extends StatefulWidget {
   final String htmlForm;
+  final String? paymentUrl;
 
   const PaymentWebView({
     super.key,
-    required this.htmlForm,
+    this.htmlForm = '',
+    this.paymentUrl,
   });
 
   @override
@@ -68,12 +70,18 @@ class _PaymentWebViewState extends State<PaymentWebView> {
             ),
             onWebViewCreated: (controller) {
               webViewController = controller;
-              // Load the HTML form data
-              controller.loadData(
-                data: widget.htmlForm,
-                mimeType: 'text/html',
-                encoding: 'utf-8',
-              );
+              final url = widget.paymentUrl?.trim();
+              if (url != null && url.isNotEmpty) {
+                controller.loadUrl(
+                  urlRequest: URLRequest(url: WebUri(url)),
+                );
+              } else {
+                controller.loadData(
+                  data: widget.htmlForm,
+                  mimeType: 'text/html',
+                  encoding: 'utf-8',
+                );
+              }
             },
             onLoadStart: (controller, url) {
               setState(() {
