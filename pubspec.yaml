@@ -45,6 +45,7 @@ flutter:
     - img/
     - assets/
     - assets/traffic_rules/
+    - assets/authors/
     - assets/pdfjs/
 
 flutter_launcher_icons:
