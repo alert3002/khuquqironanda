@@ -66,7 +66,7 @@ DEMO_OTP_MAP = {
 APP_NAME = 'Ҳуқуқи ронанда'
 
 # iOS App Store (StoreKit / JWS bundleId санҷиш)
-APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'tj.book.books')
+APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.bookkhuquqronanda.week')
 
 # SmartPay Settings
 SMARTPAY_API_TOKEN = 'def4e0372504f712a035a17ba570e42fadfb6ba9d0029df9639267a246936e8f'

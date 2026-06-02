@@ -1,27 +1,33 @@
-# Codemagic iOS — Visual Workflow (монанди версияи 1)
+# Codemagic iOS — Visual Workflow
 
-## ⚠️ codemagic.yaml НЕст — Visual workflow истифода баред
+## Bundle ID (Apple Developer)
 
-yaml workflow `.p12` сертификат мехоҳад. TestFlight версияи 1 бо **Visual + Automatic** кор карда буд.
+**iOS (App Store / TestFlight):**
+```
+com.bookkhuquqronanda.week
+```
+
+**Android (Google Play):**
+```
+com.khuquqironanda.week
+```
 
 ---
 
-## Танзимот (Codemagic UI)
+## Codemagic Distribution
 
-### 1. Workflow-и Visual (на yaml!)
-App → **Workflow Editor** → **Default Workflow** (Visual)
-
-### 2. Distribution → iOS code signing
-| | |
-|--|--|
-| Automatic | ✅ On |
+| Танзим | Қимат |
+|--------|--------|
+| Automatic | On |
 | API key | huquqironanda |
 | App Store | ✅ |
-| Bundle ID | Khuquqi Ronanda (tj.book.books) |
+| **Bundle identifier** | **com.bookkhuquqronanda.week** |
 
-### 3. Build scripts — ТАНHО ин як script
+⚠️ `tj.book.books` **хато** буд — аз ҳамин signing fail мешуд.
 
-**Script-ҳои keychain / fetch-signing-files-ро DELETE кунед.**
+---
+
+## Build script (Visual)
 
 ```bash
 cd app
@@ -29,45 +35,21 @@ flutter pub get
 flutter build ipa --release
 ```
 
-### 4. Flutter project path (агar бошад)
-**Build** → Flutter project directory: **`app`**
-
-### 5. Start build → main
+**codemagic.yaml лозим нест.**
 
 ---
 
-## Дар log бояд бинед
+## Git push
 
+```powershell
+cd C:\Users\ALIJOn\Desktop\books
+git add .
+git commit -m "Fix iOS bundle ID: com.bookkhuquqronanda.week (match Apple)"
+git push origin main
 ```
-Building tj.book.books...
-Archiving tj.book.books...
-```
-
-**НЕ** `com.khuquqironanda.week`
 
 ---
 
 ## Build number
 
-TestFlight охирин: **24** → `app/pubspec.yaml`:
-
-```yaml
-version: 2.1.2+25
-```
-
----
-
-## Android (локалӣ)
-
-```powershell
-cd C:\Users\ALIJOn\Desktop\books\app
-flutter build appbundle --release
-```
-
----
-
-## Агар Visual workflow боз fail шавад
-
-**Teams** → **Code signing identities** → **iOS** → **Generate certificate**
-
-Баъд Distribution Automatic-ро такрор санҷед.
+TestFlight охирин: **24** → `app/pubspec.yaml` **+26** ё болотар.
