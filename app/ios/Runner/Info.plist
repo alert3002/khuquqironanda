@@ -44,6 +44,23 @@
 	<string>Дастрасӣ барои хондани файлҳои китоб ва ҳуҷҷатҳо лозим аст.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ин барнома барои функсияҳои аудиоӣ ба дастрасӣ ба микрофон ниёз дорад.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>books.1week.tj</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string>
+			</dict>
+		</dict>
+	</dict>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
