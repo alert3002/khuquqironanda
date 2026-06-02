@@ -12,7 +12,7 @@ class SmartPayBank {
 
 /// Banks for SmartPay white-label (Tajikistan).
 const List<SmartPayBank> smartPayBanks = [
-  SmartPayBank(id: 8, name: 'Alif Mobi', iconAsset: 'img/wallet_2.webp'),
-  SmartPayBank(id: 9, name: 'Eskhata', iconAsset: 'img/wallet_3.webp'),
-  SmartPayBank(id: 21, name: 'DC Next', iconAsset: 'img/wallet_4.webp'),
+  SmartPayBank(id: 8, name: 'Alif Mobi', iconAsset: 'assets/smartpay/alif.png'),
+  SmartPayBank(id: 9, name: 'Eskhata', iconAsset: 'assets/smartpay/eskhata.png'),
+  SmartPayBank(id: 21, name: 'DC Next', iconAsset: 'assets/smartpay/dc.png'),
 ];

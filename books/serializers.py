@@ -1,5 +1,4 @@
 from rest_framework import serializers
-from django.db.models import Q
 from django.utils import timezone
 from .models import (
     Book,
@@ -13,29 +12,7 @@ from .models import (
     LegalDocument,
 )
 from .legal_docs import resolve_legal_document_path
-
-def _user_has_chapter_access(user, chapter):
-    if chapter.is_free:
-        return True
-    if Purchase.objects.filter(user=user, book=chapter.book).exists():
-        return True
-    if PurchasedChapter.objects.filter(user=user, chapter=chapter).exists():
-        return True
-    if chapter.is_premium:
-        return Subscription.objects.filter(
-            user=user,
-            expires_at__gt=timezone.now(),
-            plan__is_active=True,
-            plan__book=chapter.book,
-        ).filter(
-            Q(plan__chapters=chapter) | Q(plan__days__gte=180)
-        ).exists()
-    return Subscription.objects.filter(
-        user=user,
-        expires_at__gt=timezone.now(),
-        plan__is_active=True,
-        plan__book=chapter.book,
-    ).exists()
+from .access import user_has_chapter_access as _user_has_chapter_access
 
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):

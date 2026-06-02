@@ -1,7 +1,7 @@
 name: app
 description: "A new Flutter project."
 publish_to: 'none' 
-version: 3.4.4+4
+version: 3.4.4+5
 
 environment:
   sdk: ^3.10.1
@@ -48,6 +48,7 @@ flutter:
     - assets/traffic_rules/
     - assets/authors/
     - assets/pdfjs/
+    - assets/smartpay/
 
 flutter_launcher_icons:
   android: true

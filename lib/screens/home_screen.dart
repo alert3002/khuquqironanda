@@ -322,7 +322,11 @@ class _HomeScreenState extends State<HomeScreen> {
       Map<String, dynamic> result = await ApiService.purchaseBook(_book!.id, planId);
 
       if (result['success'] == true) {
-        if (mounted) {
+        if (mounted && _book != null) {
+          setState(() {
+            _book = _book!.withFullAccess();
+            _isLoading = false;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(result['message'] ?? "Табрик! Обуна харида шуд."),
@@ -729,6 +733,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final chapter = chapters[index];
         return _ChapterCard(
           chapter: chapter,
+          bookUnlocked: _book?.isPurchased ?? false,
           onTap: () => _onChapterTap(chapter),
         );
       },
@@ -736,7 +741,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onChapterTap(Chapter chapter) {
-    final isAccessible = chapter.isFree || chapter.isPurchased;
+    final bookUnlocked = _book?.isPurchased ?? false;
+    final isAccessible = chapter.isFree || chapter.isPurchased || bookUnlocked;
     if (isAccessible) {
       _openReader(chapterId: chapter.id);
     } else if (chapter.isPremium) {
@@ -852,13 +858,19 @@ class _CategoryCard extends StatelessWidget {
 
 class _ChapterCard extends StatelessWidget {
   final Chapter chapter;
+  final bool bookUnlocked;
   final VoidCallback onTap;
 
-  const _ChapterCard({required this.chapter, required this.onTap});
+  const _ChapterCard({
+    required this.chapter,
+    required this.bookUnlocked,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final isAccessible = chapter.isFree || chapter.isPurchased;
+    final isAccessible =
+        chapter.isFree || chapter.isPurchased || bookUnlocked;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(

@@ -39,32 +39,14 @@ from .serializers import (
     LegalDocumentSerializer,
 )
 from .services import generate_payment_xml, create_smartpay_invoice
+from .payment_utils import find_transaction_for_smartpay, apply_smartpay_success, format_smartpay_id
+from .access import user_has_chapter_access
 
 User = get_user_model()
 
 
 def _has_chapter_access(user, chapter):
-    if chapter.is_free:
-        return True
-    if PurchasedChapter.objects.filter(user=user, chapter=chapter).exists():
-        return True
-    if Purchase.objects.filter(user=user, book=chapter.book).exists():
-        return True
-    if chapter.is_premium:
-        return Subscription.objects.filter(
-            user=user,
-            expires_at__gt=timezone.now(),
-            plan__is_active=True,
-            plan__book=chapter.book,
-        ).filter(
-            Q(plan__chapters=chapter) | Q(plan__days__gte=180)
-        ).exists()
-    return Subscription.objects.filter(
-        user=user,
-        expires_at__gt=timezone.now(),
-        plan__is_active=True,
-        plan__book=chapter.book,
-    ).exists()
+    return user_has_chapter_access(user, chapter)
 
 class BookViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -406,10 +388,13 @@ class SmartPayInitView(APIView):
         except Exception as e:
             return Response({'error': f'Хатогӣ ҳангоми SmartPay: {e}'}, status=500)
 
-        # Save pending transaction
-        extra_note = ''
+        # Save pending transaction (merchant order_id + SmartPay dashboard id for webhook)
+        extra_parts = []
         if result.get('invoice_id'):
-            extra_note = f" [invoice_id:{result['invoice_id']}]"
+            extra_parts.append(f"invoice_id:{result['invoice_id']}")
+        if result.get('smartpay_id'):
+            extra_parts.append(f"smartpay_id:{result['smartpay_id']}")
+        extra_note = f" [{' '.join(extra_parts)}]" if extra_parts else ''
         Transaction.objects.create(
             user=request.user,
             amount=amount_decimal,
@@ -435,6 +420,7 @@ class SmartPayInitView(APIView):
         response_data = {
             'payment_link': payment_link,
             'order_id': result['order_id'],
+            'smartpay_id': result.get('smartpay_id'),
             'success': True,
         }
         if deeplink_url:
@@ -454,10 +440,14 @@ class SmartPayStatusView(APIView):
         if not order_id:
             return Response({'error': 'order_id зарур аст'}, status=400)
 
-        txn = Transaction.objects.filter(
-            user=request.user,
-            transaction_id=order_id,
-        ).first()
+        txn = find_transaction_for_smartpay(order_id=order_id)
+        if txn and txn.user_id != request.user.id:
+            txn = None
+        if not txn:
+            txn = Transaction.objects.filter(
+                user=request.user,
+                transaction_id=order_id,
+            ).first()
         if not txn:
             txn = Transaction.objects.filter(
                 user=request.user,
@@ -642,42 +632,35 @@ class SmartPayWebhookView(APIView):
             or payload.get('order_id')
             or payload.get('orderId')
         )
+        smartpay_id = (
+            data.get('smartpay_id')
+            or data.get('smartpayId')
+            or data.get('smartpayid')
+            or payload.get('smartpay_id')
+            or payload.get('smartpayId')
+        )
+        if smartpay_id:
+            smartpay_id = format_smartpay_id(smartpay_id)
         invoice_id = (
             data.get('invoice_id')
+            or data.get('invoice_uuid')
             or data.get('id')
             or data.get('payment_id')
             or payload.get('invoice_id')
+            or payload.get('invoice_uuid')
             or payload.get('id')
         )
 
-        def _find_txn():
-            if order_id:
-                txn = Transaction.objects.filter(transaction_id=order_id).first()
-                if txn:
-                    return txn
-                txn = Transaction.objects.filter(transaction_id__iexact=str(order_id).strip()).first()
-                if txn:
-                    return txn
-                txn = Transaction.objects.filter(transaction_id__icontains=str(order_id).strip()).first()
-                if txn:
-                    return txn
-            if invoice_id:
-                return Transaction.objects.filter(
-                    description__icontains=f"invoice_id:{invoice_id}"
-                ).first()
-            return None
-
-        txn = _find_txn()
+        txn = find_transaction_for_smartpay(
+            order_id=order_id,
+            smartpay_id=smartpay_id,
+            invoice_id=invoice_id,
+        )
         if not txn:
             return Response({'status': 'accepted'})
 
         if status in ('success', 'paid', 'completed'):
-            if txn.status != 'SUCCESS':
-                txn.status = 'SUCCESS'
-                txn.save(update_fields=['status'])
-                user = txn.user
-                user.balance += txn.amount
-                user.save(update_fields=['balance'])
+            apply_smartpay_success(txn)
         elif status in ('failed', 'declined', 'canceled', 'cancelled'):
             if txn.status != 'FAILED':
                 txn.status = 'FAILED'

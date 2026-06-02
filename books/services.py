@@ -156,8 +156,16 @@ def create_smartpay_invoice(
     if not payment_link:
         raise ValueError(data or {"error": "payment_link not found"})
 
+    raw_smartpay_id = data.get("smartpay_id") or data.get("smartpayId")
+    smartpay_id = raw_smartpay_id
+    if smartpay_id and "-" not in str(smartpay_id):
+        digits = "".join(c for c in str(smartpay_id) if c.isdigit())
+        if len(digits) > 3:
+            smartpay_id = f"{digits[:3]}-{digits[3:]}"
+
     return {
         "order_id": data.get("order_id", order_id),
+        "smartpay_id": smartpay_id,
         "invoice_id": data.get("invoice_uuid") or data.get("id"),
         "payment_link": payment_link,
         "deeplink_url": data.get("deeplink_url"),

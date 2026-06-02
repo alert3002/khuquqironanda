@@ -394,6 +394,31 @@ class ApiService {
     return [];
   }
 
+  /// Mark book + all chapters purchased in Hive (books_cache and book_{id}).
+  static Future<void> markBookAccessInCache(int bookId, {bool isPurchased = true}) async {
+    await _updateBookInCache(bookId, isPurchased);
+    try {
+      final cached = await _loadBookDetailsFromCache(bookId);
+      if (cached != null) {
+        await _saveBookDetailsToCache(cached.withFullAccess());
+        return;
+      }
+      var box = Hive.box('cache_books');
+      final booksJson = box.get('books_cache');
+      if (booksJson is List) {
+        for (final item in booksJson) {
+          if (item is Map && item['id'] == bookId) {
+            final book = Book.fromJson(Map<String, dynamic>.from(item));
+            await _saveBookDetailsToCache(book.withFullAccess());
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ markBookAccessInCache details: $e');
+    }
+  }
+
   // Навсозии як китоб дар кеш (барои синхронизатсияи харид)
   static Future<void> _updateBookInCache(int bookId, bool isPurchased) async {
     try {
@@ -727,11 +752,10 @@ class ApiService {
     
     // Агар харид муваффақ бошад, кешро навсозӣ мекунем
     if (result['success'] == true) {
-      // Навсозии китоб дар кеш
-      await _updateBookInCache(bookId, true);
+      await markBookAccessInCache(bookId);
       print("✅ Book $bookId subscription synced to cache");
     }
-    
+
     return result;
   }
 

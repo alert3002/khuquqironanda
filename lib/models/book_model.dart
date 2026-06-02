@@ -110,4 +110,31 @@ class Book {
     if (expiresAt == null) return null;
     return "${expiresAt!.year}-${expiresAt!.month.toString().padLeft(2, '0')}-${expiresAt!.day.toString().padLeft(2, '0')}";
   }
+
+  /// After subscription purchase — unlock all chapters in UI until server refresh.
+  Book withFullAccess({DateTime? subscriptionExpiresAt}) {
+    return Book(
+      id: id,
+      title: title,
+      description: description,
+      coverImage: coverImage,
+      price: price,
+      isPurchased: true,
+      plans: plans,
+      expiresAt: subscriptionExpiresAt ?? expiresAt,
+      chapters: chapters
+          .map(
+            (c) => Chapter(
+              id: c.id,
+              title: c.title,
+              content: c.content,
+              isFree: c.isFree,
+              order: c.order,
+              isPurchased: c.isFree || true,
+              isPremium: c.isPremium,
+            ),
+          )
+          .toList(),
+    );
+  }
 }
