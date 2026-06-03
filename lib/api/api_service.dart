@@ -14,8 +14,88 @@ import '../services/legal_documents_cache.dart';
 class ApiService {
   // --- ТАНЗИМОТИ ASOSӢ ---
 
+  static const String _reviewModeKey = 'review_mode';
+  static const String _reviewPhoneKey = 'review_phone';
+  static const String reviewPhone = '+992921234567';
+  static const String reviewCode = '3002';
+  static const String _reviewBalance = '59.00';
   static String? _lastAuthErrorMessage;
+
   static String? get lastAuthErrorMessage => _lastAuthErrorMessage;
+
+  static bool isReviewMode() {
+    try {
+      return Hive.box('settings').get(_reviewModeKey, defaultValue: false) ==
+          true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> enableReviewMode({String? phone}) async {
+    final box = Hive.box('settings');
+    await box.put(_reviewModeKey, true);
+    await box.put(_reviewPhoneKey, phone ?? reviewPhone);
+    await box.delete('token');
+    await box.delete('is_guest');
+  }
+
+  static Future<void> clearReviewMode() async {
+    final box = Hive.box('settings');
+    await box.delete(_reviewModeKey);
+    await box.delete(_reviewPhoneKey);
+  }
+
+  static User _buildReviewUser() {
+    final box = Hive.box('settings');
+    final phone = box.get(_reviewPhoneKey, defaultValue: reviewPhone) as String;
+    return User(
+      id: -1,
+      phone: phone,
+      firstName: 'Google',
+      lastName: 'Reviewer',
+      balance: _reviewBalance,
+      birthDate: null,
+    );
+  }
+
+  static dynamic _applyReviewAccess(dynamic data) {
+    if (!isReviewMode()) return data;
+
+    if (data is List) {
+      return data.map((item) => _applyReviewAccess(item)).toList();
+    }
+
+    if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+
+      if (map.containsKey('results') && map['results'] is List) {
+        map['results'] = _applyReviewAccess(map['results']);
+      }
+
+      if (map.containsKey('chapters') && map['chapters'] is List) {
+        map['chapters'] = (map['chapters'] as List).map((chapter) {
+          final chapterMap = Map<String, dynamic>.from(chapter as Map);
+          chapterMap['is_purchased'] = true;
+          return chapterMap;
+        }).toList();
+      }
+
+      if (map.containsKey('is_purchased')) {
+        map['is_purchased'] = true;
+      }
+
+      if (map.containsKey('expires_at') && map['expires_at'] == null) {
+        map['expires_at'] = DateTime.now()
+            .add(const Duration(days: 365))
+            .toIso8601String();
+      }
+
+      return map;
+    }
+
+    return data;
+  }
 
   // Target Book ID for Single Book Application
   static const int targetBookId = 1;
@@ -47,26 +127,14 @@ class ApiService {
     }
   }
 
-  static Future<Book?> _loadBundledSampleBook() async {
-    try {
-      final raw = await rootBundle.loadString('assets/sample_book.json');
-      final data = jsonDecode(raw);
-      if (data is Map<String, dynamic>) {
-        return Book.fromJson(data);
-      }
-      if (data is Map) {
-        return Book.fromJson(Map<String, dynamic>.from(data));
-      }
-    } catch (e) {
-      print("❌ Error loading bundled sample book: $e");
+  /// Китоби demo аз assets/sample_book.json — танҳо барои Play Console, на HomeScreen.
+  static bool isBundledSampleBook(Book book) {
+    final t = book.title.toLowerCase();
+    if (t.contains('namuna') || t.contains('намуна') || t.contains('offline demo')) {
+      return true;
     }
-    return null;
-  }
-
-  static Future<List<Book>> _fallbackBooks() async {
-    final sample = await _loadBundledSampleBook();
-    if (sample != null) return [sample];
-    return [];
+    final chapterIds = book.chapters.map((c) => c.id).toSet();
+    return chapterIds.containsAll({101, 102, 103});
   }
 
   // Функсияи ёрирасон барои сохтани Header (бо Токен)
@@ -116,11 +184,14 @@ class ApiService {
 
   // --- 1. АВТОРИЗАЦИЯ (AUTH) ---
 
+  /// Username-и бот (бе @) — барои Telegram Login Widget.
+  static const String telegramBotUsername = 'huquqironanda_bot';
+
   static Future<Map<String, dynamic>> sendCode(String phone) async {
     try {
       final deviceId = await getDeviceId();
       print("🚀 Sending SMS to: $phone (Device ID: $deviceId)");
-      
+
       final response = await http.post(
         Uri.parse('$baseUrl/auth/send-code/'),
         headers: await _getHeaders(auth: false),
@@ -130,31 +201,90 @@ class ApiService {
         }),
       );
 
+      final body = utf8.decode(response.bodyBytes);
+      Map<String, dynamic>? data;
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map) {
+          data = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+
       if (response.statusCode == 200) {
         print("✅ SMS sent successfully");
-        return {'success': true};
-      } else if (response.statusCode == 403) {
-        // Device restriction error
-        final errorData = jsonDecode(utf8.decode(response.bodyBytes));
+        return {'success': true, if (data?['code'] != null) 'code': data!['code']};
+      }
+      if (response.statusCode == 429) {
         return {
           'success': false,
-          'error': errorData['error'] ?? errorData['message'] ?? 'Device restriction',
-          'statusCode': 403,
-        };
-      } else {
-        print("❌ SMS Error: ${response.body}");
-        return {
-          'success': false,
-          'error': 'Хатогӣ дар ирсоли СМС',
-          'statusCode': response.statusCode,
+          'error': data?['error'] ?? 'Лутфан пас аз чанд сония такрор кунед',
+          'retry_after': data?['retry_after'],
+          'statusCode': 429,
         };
       }
+      if (response.statusCode == 403) {
+        return {
+          'success': false,
+          'error': data?['error'] ?? 'Device restriction',
+          'statusCode': 403,
+        };
+      }
+      return {
+        'success': false,
+        'error': data?['error'] ?? 'Хатогӣ дар ирсоли СМС',
+        'statusCode': response.statusCode,
+      };
     } catch (e) {
       print("❌ Connection Error: $e");
       return {
         'success': false,
         'error': 'Хатогии пайвастшавӣ: $e',
       };
+    }
+  }
+
+  static Future<Map<String, dynamic>> loginWithTelegram(
+    Map<String, dynamic> telegramUser,
+  ) async {
+    try {
+      final deviceId = await getDeviceId();
+      final payload = Map<String, dynamic>.from(telegramUser);
+      payload['device_id'] = deviceId;
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/telegram/'),
+        headers: await _getHeaders(auth: false),
+        body: jsonEncode(payload),
+      );
+
+      final body = utf8.decode(response.bodyBytes);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(body) as Map<String, dynamic>;
+        final token = data['token']?.toString();
+        if (token == null || token.isEmpty) {
+          return {'success': false, 'error': 'Token дар ҷавоб нест'};
+        }
+        final box = Hive.box('settings');
+        await box.put('token', token);
+        await box.put('device_id', deviceId);
+        await box.put('login_date', DateTime.now().toIso8601String());
+        await box.delete('is_guest');
+        return {'success': true};
+      }
+
+      Map<String, dynamic>? err;
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map) err = Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+
+      return {
+        'success': false,
+        'error': err?['error'] ?? 'Хатогии воридшавӣ тавассути Telegram',
+        'statusCode': response.statusCode,
+      };
+    } catch (e) {
+      return {'success': false, 'error': 'Хатогии пайвастшавӣ: $e'};
     }
   }
 
@@ -217,6 +347,14 @@ class ApiService {
   static Future<User?> getUserProfile() async {
     _lastAuthErrorMessage = null;
     try {
+      final box = Hive.box('settings');
+      final token = box.get('token');
+      final reviewMode = box.get(_reviewModeKey, defaultValue: false) == true;
+
+      if ((token == null || token.toString().isEmpty) && reviewMode) {
+        return _buildReviewUser();
+      }
+
       final response = await http.get(
         Uri.parse('$baseUrl/auth/profile/'),
         headers: await _getHeaders(),
@@ -227,17 +365,25 @@ class ApiService {
         return User.fromJson(data);
       } else if (response.statusCode == 401) {
         _lastAuthErrorMessage =
-            'Сессия ба анҷом расид. Лутфан дубора ворид шавед.';
-        print("⚠️ Profile Error: 401");
+            'Сессия ба анҷом расид ё иҷозатнома нодуруст аст. Лутфан дубора ворид шавед.';
+        if (reviewMode) {
+          return _buildReviewUser();
+        }
       } else {
         print("⚠️ Profile Error: ${response.statusCode}");
         _lastAuthErrorMessage =
             'Профил бор нашуд. Хатогӣ: ${response.statusCode}';
+        if (reviewMode) {
+          return _buildReviewUser();
+        }
       }
     } catch (e) {
       print("❌ Error getting profile: $e");
       _lastAuthErrorMessage =
           'Хатогии пайвастшавӣ ҳангоми гирифтани профил.';
+      if (isReviewMode()) {
+        return _buildReviewUser();
+      }
     }
     return null;
   }
@@ -397,7 +543,10 @@ class ApiService {
       var box = Hive.box('cache_books');
       final booksJson = box.get('books_cache');
       if (booksJson != null && booksJson is List) {
-        return booksJson.map((item) => Book.fromJson(Map<String, dynamic>.from(item))).toList();
+        final data = _applyReviewAccess(booksJson) as List;
+        return data
+            .map((item) => Book.fromJson(Map<String, dynamic>.from(item)))
+            .toList();
       }
     } catch (e) {
       print("❌ Error loading books from cache: $e");
@@ -497,7 +646,8 @@ class ApiService {
       var box = Hive.box('cache_books');
       final bookJson = box.get('book_$bookId');
       if (bookJson != null && bookJson is Map) {
-        return Book.fromJson(Map<String, dynamic>.from(bookJson));
+        final data = _applyReviewAccess(Map<String, dynamic>.from(bookJson));
+        return Book.fromJson(Map<String, dynamic>.from(data));
       }
     } catch (e) {
       print("❌ Error loading book details from cache: $e");
@@ -524,7 +674,7 @@ class ApiService {
           print("⚠️ Error saving raw JSON to cache: $e");
         }
 
-        final data = jsonDecode(rawJsonBody);
+        final data = _applyReviewAccess(jsonDecode(rawJsonBody));
 
         List<dynamic> list;
         // Санҷиши структураи API (Pagination ё List оддӣ)
@@ -536,53 +686,100 @@ class ApiService {
           list = [];
         }
 
-        final books = list.map((item) => Book.fromJson(item)).toList();
-        
-        // Сабти маълумоти пурра дар кеш (Full JSON для backward compatibility)
+        final books = _filterRealBooks(
+          list.map((item) => Book.fromJson(item)).toList(),
+        );
+
         await _saveBooksToCache(books);
-        
+
         return books;
       } else {
         print("⚠️ Books Error: ${response.statusCode}");
         // Агар хатогӣ рух дода бошад, аз кеш мехонем
-        final cached = await _loadBooksFromCacheRaw();
+        final cached = _filterRealBooks(await _loadBooksFromCacheRaw());
         if (cached.isNotEmpty) return cached;
-        return await _fallbackBooks();
+        return [];
       }
     } catch (e) {
       print("❌ Error getting books: $e");
-      // Агар хатогӣ рух дода бошад, аз кеш мехонем
-      final cached = await _loadBooksFromCacheRaw();
+      final cached = _filterRealBooks(await _loadBooksFromCacheRaw());
       if (cached.isNotEmpty) return cached;
-      return await _fallbackBooks();
+      return [];
     }
   }
 
+  static List<Book> _filterRealBooks(List<Book> books) {
+    return books.where((b) => !isBundledSampleBook(b)).toList();
+  }
+
   // Fetch only the target book for Single Book Application
-  static Future<Book?> fetchTargetBook() async {
+  /// Зуд аз кеш — барои намоиши фаврӣ дар HomeScreen.
+  static Future<Book?> fetchTargetBookCached() async {
     try {
-      final books = await getBooks();
       final selectedId = await getSelectedBookId();
-      final targetBook = books.firstWhere(
-        (book) => book.id == selectedId,
-        orElse: () => books.isNotEmpty ? books.first : throw Exception('No books found'),
-      );
-      return targetBook;
-    } catch (e) {
-      print("❌ Error fetching target book: $e");
-      // Try to get from cache
-      try {
-        final cachedBooks = await _loadBooksFromCacheRaw();
-        final targetBook = cachedBooks.firstWhere(
-          (book) => book.id == targetBookId,
-          orElse: () => cachedBooks.isNotEmpty ? cachedBooks.first : throw Exception('No cached books found'),
-        );
-        return targetBook;
-      } catch (cacheError) {
-        print("❌ Error loading target book from cache: $cacheError");
-        return await _loadBundledSampleBook();
+
+      final details = await _loadBookDetailsFromCache(selectedId);
+      if (details != null && !isBundledSampleBook(details)) {
+        return details;
       }
+
+      final cachedBooks = _filterRealBooks(await _loadBooksFromCacheRaw());
+      if (cachedBooks.isNotEmpty) {
+        final book = cachedBooks.firstWhere(
+          (b) => b.id == selectedId,
+          orElse: () => cachedBooks.first,
+        );
+        if (book.chapters.isNotEmpty) return book;
+      }
+    } catch (e) {
+      print('⚠️ fetchTargetBookCached: $e');
     }
+    return null;
+  }
+
+  /// Китоби асосӣ бо ҳамаи бобҳо ва матн — аз /books/{id}/.
+  static Future<Book?> fetchTargetBook() async {
+    final selectedId = await getSelectedBookId();
+
+    final details = await getBookDetails(selectedId);
+    if (details != null && !isBundledSampleBook(details)) {
+      return details;
+    }
+
+    try {
+      final books = _filterRealBooks(await getBooks());
+      if (books.isNotEmpty) {
+        final target = books.firstWhere(
+          (book) => book.id == selectedId,
+          orElse: () => books.first,
+        );
+        if (target.chapters.isNotEmpty) return target;
+
+        final cached = await _loadBookDetailsFromCache(selectedId);
+        if (cached != null && !isBundledSampleBook(cached)) return cached;
+        return target;
+      }
+    } catch (e) {
+      print('❌ Error fetching target book: $e');
+    }
+
+    try {
+      final cached = _filterRealBooks(await _loadBooksFromCacheRaw());
+      if (cached.isNotEmpty) {
+        return cached.firstWhere(
+          (book) => book.id == selectedId,
+          orElse: () => cached.first,
+        );
+      }
+      final cachedDetails = await _loadBookDetailsFromCache(selectedId);
+      if (cachedDetails != null && !isBundledSampleBook(cachedDetails)) {
+        return cachedDetails;
+      }
+    } catch (e) {
+      print('❌ Error loading target book from cache: $e');
+    }
+
+    return null;
   }
 
   static Future<LegalDocumentsPageData?> fetchLegalDocuments() async {
@@ -646,8 +843,8 @@ class ApiService {
       
       if (rawJson != null && rawJson is String) {
         print("📦 Loading books from raw JSON cache");
-        final data = jsonDecode(rawJson);
-        
+        final data = _applyReviewAccess(jsonDecode(rawJson));
+
         List<dynamic> list;
         if (data is List) {
           list = data;
@@ -656,8 +853,10 @@ class ApiService {
         } else {
           list = [];
         }
-        
-        final books = list.map((item) => Book.fromJson(item)).toList();
+
+        final books = _filterRealBooks(
+          list.map((item) => Book.fromJson(item)).toList(),
+        );
         print("✅ Loaded ${books.length} books from raw JSON cache");
         return books;
       }
@@ -666,7 +865,7 @@ class ApiService {
     }
     
     // Fallback to old cache method
-    final cachedBooks = await _loadBooksFromCache();
+    final cachedBooks = _filterRealBooks(await _loadBooksFromCache());
     if (cachedBooks.isNotEmpty) {
       print("📦 Loaded ${cachedBooks.length} books from old cache format");
       return cachedBooks;
@@ -676,47 +875,35 @@ class ApiService {
     return [];
   }
 
-  // Гирифтани тафсилоти як китоб
+  // Гирифтани тафсилоти як китоб (бобҳо + матн)
   static Future<Book?> getBookDetails(int bookId) async {
-    // Санҷиши пайвастшавӣ
-    final hasInternet = await _hasInternetConnection();
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/books/$bookId/'),
+            headers: await _getHeaders(),
+          )
+          .timeout(const Duration(seconds: 25));
 
-    if (hasInternet) {
-      // Агар онлайн бошад, маълумотро аз API мегирем
-      try {
-        final response = await http.get(
-          Uri.parse('$baseUrl/books/$bookId/'),
-          headers: await _getHeaders(),
+      if (response.statusCode == 200) {
+        final data = _applyReviewAccess(
+          jsonDecode(utf8.decode(response.bodyBytes)),
         );
-
-        if (response.statusCode == 200) {
-          final data = jsonDecode(utf8.decode(response.bodyBytes));
-          final book = Book.fromJson(data);
-          
-          // Сабти маълумот дар кеш
-          await _saveBookDetailsToCache(book);
-          
-          return book;
-        } else {
-          print("⚠️ Book Details Error: ${response.statusCode}");
-        }
-      } catch (e) {
-        print("❌ Error getting book details: $e");
+        final book = Book.fromJson(data);
+        await _saveBookDetailsToCache(book);
+        return book;
       }
+      print('⚠️ Book Details Error: ${response.statusCode} ${response.body}');
+    } catch (e) {
+      print('❌ Error getting book details: $e');
     }
 
-    // Агар офлайн бошад ё хатогӣ рух дода бошад, аз кеш мехонем
     final cachedBook = await _loadBookDetailsFromCache(bookId);
-    if (cachedBook != null) {
-      print("📦 Loaded book details from cache for book ID: $bookId");
+    if (cachedBook != null && !isBundledSampleBook(cachedBook)) {
+      print('📦 Loaded book details from cache for book ID: $bookId');
       return cachedBook;
     }
 
-    // Агар дар кеш маълумот набошад
-    if (!hasInternet) {
-      print("⚠️ No Internet connection and no cached data for book ID: $bookId");
-    }
-    
     return null;
   }
 
@@ -883,6 +1070,7 @@ class ApiService {
           'deeplink_url': data['deeplink_url'],
           'html_form': data['html_form'],
           'order_id': data['order_id'],
+          'smartpay_id': data['smartpay_id'],
         };
       } else {
         final errorData = jsonDecode(utf8.decode(response.bodyBytes));
@@ -911,6 +1099,69 @@ class ApiService {
     } catch (e) {
       return {'status': 'unknown', 'error': e.toString()};
     }
+  }
+
+  /// «Навсозӣ» — синхронизацияи PENDING ва гирифтани баланси нав.
+  static Future<Map<String, dynamic>> refreshPendingPayments() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/payment/smartpay/refresh-pending/'),
+        headers: await _getHeaders(),
+        body: '{}',
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        if (data is Map<String, dynamic>) {
+          return {'success': true, ...data};
+        }
+        return {'success': true, 'data': data};
+      }
+      return {
+        'success': false,
+        'error': 'Хатогӣ: ${response.statusCode}',
+      };
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Санҷиши ҳамаи PENDING (пуркунии баланс) ва навсозии профил.
+  static Future<Map<String, dynamic>> syncPendingTopUpsAndBalance() async {
+    final beforeHistory = await fetchPaymentHistory();
+    final beforePending = _countPendingTopUps(beforeHistory);
+
+    await refreshPendingPayments();
+
+    for (final item in beforeHistory) {
+      if (!_isPendingTopUp(item)) continue;
+      final orderId = item['transaction_id']?.toString();
+      if (orderId != null && orderId.isNotEmpty) {
+        await checkSmartpayStatus(orderId);
+      }
+    }
+
+    final afterHistory = await fetchPaymentHistory();
+    final afterPending = _countPendingTopUps(afterHistory);
+    final userAfter = await getUserProfile();
+
+    return {
+      'success': true,
+      'balance': userAfter?.balance,
+      'history': afterHistory,
+      'became_success': beforePending - afterPending,
+      'pending_count': afterPending,
+    };
+  }
+
+  static bool _isPendingTopUp(Map<String, dynamic> item) {
+    if (item['status']?.toString() != 'PENDING') return false;
+    final desc = item['description']?.toString() ?? '';
+    return desc.contains('Пур кардани баланс') ||
+        desc.contains('пур кардани баланс');
+  }
+
+  static int _countPendingTopUps(List<Map<String, dynamic>> items) {
+    return items.where(_isPendingTopUp).length;
   }
 
   static Future<List<Map<String, dynamic>>> fetchPaymentHistory() async {
@@ -1002,6 +1253,17 @@ class ApiService {
     } catch (e) {
       return {'success': false, 'error': 'Хатогии пайвастшавӣ: $e'};
     }
+  }
+
+  /// Баъди харид дар iOS (StoreKit) — тасдиқи JWS дар сервер.
+  static Future<Map<String, dynamic>> confirmAppleIap({
+    required int planId,
+    required String signedTransactionInfo,
+  }) {
+    return _postRequest('$baseUrl/iap/apple/confirm/', {
+      'plan_id': planId,
+      'signed_transaction_info': signedTransactionInfo,
+    });
   }
 
   // --- ФУНКСИЯИ УМУМӢ БАРОИ POST REQUESTS ---

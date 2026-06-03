@@ -1070,6 +1070,7 @@ class ApiService {
           'deeplink_url': data['deeplink_url'],
           'html_form': data['html_form'],
           'order_id': data['order_id'],
+          'smartpay_id': data['smartpay_id'],
         };
       } else {
         final errorData = jsonDecode(utf8.decode(response.bodyBytes));
@@ -1098,6 +1099,69 @@ class ApiService {
     } catch (e) {
       return {'status': 'unknown', 'error': e.toString()};
     }
+  }
+
+  /// «Навсозӣ» — синхронизацияи PENDING ва гирифтани баланси нав.
+  static Future<Map<String, dynamic>> refreshPendingPayments() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/payment/smartpay/refresh-pending/'),
+        headers: await _getHeaders(),
+        body: '{}',
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        if (data is Map<String, dynamic>) {
+          return {'success': true, ...data};
+        }
+        return {'success': true, 'data': data};
+      }
+      return {
+        'success': false,
+        'error': 'Хатогӣ: ${response.statusCode}',
+      };
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Санҷиши ҳамаи PENDING (пуркунии баланс) ва навсозии профил.
+  static Future<Map<String, dynamic>> syncPendingTopUpsAndBalance() async {
+    final beforeHistory = await fetchPaymentHistory();
+    final beforePending = _countPendingTopUps(beforeHistory);
+
+    await refreshPendingPayments();
+
+    for (final item in beforeHistory) {
+      if (!_isPendingTopUp(item)) continue;
+      final orderId = item['transaction_id']?.toString();
+      if (orderId != null && orderId.isNotEmpty) {
+        await checkSmartpayStatus(orderId);
+      }
+    }
+
+    final afterHistory = await fetchPaymentHistory();
+    final afterPending = _countPendingTopUps(afterHistory);
+    final userAfter = await getUserProfile();
+
+    return {
+      'success': true,
+      'balance': userAfter?.balance,
+      'history': afterHistory,
+      'became_success': beforePending - afterPending,
+      'pending_count': afterPending,
+    };
+  }
+
+  static bool _isPendingTopUp(Map<String, dynamic> item) {
+    if (item['status']?.toString() != 'PENDING') return false;
+    final desc = item['description']?.toString() ?? '';
+    return desc.contains('Пур кардани баланс') ||
+        desc.contains('пур кардани баланс');
+  }
+
+  static int _countPendingTopUps(List<Map<String, dynamic>> items) {
+    return items.where(_isPendingTopUp).length;
   }
 
   static Future<List<Map<String, dynamic>>> fetchPaymentHistory() async {

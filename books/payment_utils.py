@@ -111,6 +111,13 @@ def find_transaction_for_smartpay(order_id=None, smartpay_id=None, invoice_id=No
     return None
 
 
+def extract_smartpay_id_from_description(description):
+    if not description:
+        return None
+    match = re.search(r'smartpay_id:([^\]\s]+)', str(description), re.IGNORECASE)
+    return match.group(1).strip() if match else None
+
+
 def apply_smartpay_success(txn):
     """Mark transaction SUCCESS and credit user balance (idempotent)."""
     if txn.status == 'SUCCESS':

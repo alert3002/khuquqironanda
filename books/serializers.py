@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 from django.utils import timezone
 from .models import (
@@ -75,10 +77,24 @@ class BookSerializer(serializers.ModelSerializer):
         return None
 
 
+def _clean_transaction_description(description):
+    if not description:
+        return ''
+    text = str(description)
+    text = re.sub(r'\s*\[smartpay_id:[^\]]+\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s*\[invoice_id:[^\]]+\]', '', text, flags=re.IGNORECASE)
+    return text.strip()
+
+
 class TransactionSerializer(serializers.ModelSerializer):
+    description = serializers.SerializerMethodField()
+
     class Meta:
         model = Transaction
         fields = ['transaction_id', 'amount', 'status', 'description', 'created_at']
+
+    def get_description(self, obj):
+        return _clean_transaction_description(obj.description)
 
 
 class AboutPageSerializer(serializers.ModelSerializer):

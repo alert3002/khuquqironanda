@@ -1,10 +1,6 @@
 class SmartPayBank {
-  /// Local UI id (selection in app).
   final int uiId;
-
-  /// SmartPay API `deeplink_bank_id`. null = no deeplink (web invoice, e.g. DC Next).
-  /// See https://smartpay.tj/dev/white-label — id 21 is IBT, NOT DC Next.
-  final int? deeplinkBankId;
+  final int deeplinkBankId;
   final String name;
   final String iconAsset;
 
@@ -14,11 +10,9 @@ class SmartPayBank {
     required this.name,
     required this.iconAsset,
   });
-
-  bool get usesWebPayment => deeplinkBankId == null;
 }
 
-/// Banks for SmartPay white-label (Tajikistan).
+/// SmartPay white-label: only Alif (8) and Eskhata (9).
 const List<SmartPayBank> smartPayBanks = [
   SmartPayBank(
     uiId: 1,
@@ -31,12 +25,6 @@ const List<SmartPayBank> smartPayBanks = [
     deeplinkBankId: 9,
     name: 'Eskhata',
     iconAsset: 'assets/smartpay/eskhata.png',
-  ),
-  SmartPayBank(
-    uiId: 3,
-    deeplinkBankId: null,
-    name: 'DC Next',
-    iconAsset: 'assets/smartpay/dc.png',
   ),
 ];
 

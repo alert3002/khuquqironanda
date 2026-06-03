@@ -39,7 +39,12 @@ from .serializers import (
     LegalDocumentSerializer,
 )
 from .services import generate_payment_xml, create_smartpay_invoice
-from .payment_utils import find_transaction_for_smartpay, apply_smartpay_success, format_smartpay_id
+from .payment_utils import (
+    find_transaction_for_smartpay,
+    apply_smartpay_success,
+    format_smartpay_id,
+    extract_smartpay_id_from_description,
+)
 from .access import user_has_chapter_access
 
 User = get_user_model()
@@ -437,10 +442,14 @@ class SmartPayStatusView(APIView):
 
     def get(self, request):
         order_id = request.query_params.get('order_id')
-        if not order_id:
-            return Response({'error': 'order_id зарур аст'}, status=400)
+        smartpay_id = request.query_params.get('smartpay_id')
+        if not order_id and not smartpay_id:
+            return Response({'error': 'order_id ё smartpay_id зарур аст'}, status=400)
 
-        txn = find_transaction_for_smartpay(order_id=order_id)
+        txn = find_transaction_for_smartpay(
+            order_id=order_id,
+            smartpay_id=smartpay_id,
+        )
         if txn and txn.user_id != request.user.id:
             txn = None
         if not txn:
@@ -461,6 +470,52 @@ class SmartPayStatusView(APIView):
             'status': txn.status,
             'order_id': txn.transaction_id,
             'amount': str(txn.amount),
+        })
+
+
+class SmartPayRefreshPendingView(APIView):
+    """
+    Refresh pending top-up statuses and current balance for the app «Навсозӣ» button.
+    Does not call SmartPay API — returns latest DB state after webhook processing.
+    """
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        user.refresh_from_db()
+
+        pending_qs = Transaction.objects.filter(
+            user=user,
+            status='PENDING',
+        ).filter(
+            Q(description__icontains='Пур кардани баланс')
+            | Q(description__icontains='пур кардани баланс')
+        ).order_by('-created_at')
+
+        items = []
+        for txn in pending_qs:
+            sp_id = extract_smartpay_id_from_description(txn.description)
+            items.append({
+                'transaction_id': txn.transaction_id,
+                'smartpay_id': sp_id,
+                'status': txn.status,
+                'amount': str(txn.amount),
+            })
+
+        success_count = Transaction.objects.filter(
+            user=user,
+            status='SUCCESS',
+        ).filter(
+            Q(description__icontains='Пур кардани баланс')
+            | Q(description__icontains='пур кардани баланс')
+        ).count()
+
+        return Response({
+            'balance': str(user.balance),
+            'pending': items,
+            'pending_count': len(items),
+            'success_topups': success_count,
         })
 
 

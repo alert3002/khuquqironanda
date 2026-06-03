@@ -1,6 +1,6 @@
 class SmartPayBank {
   final int uiId;
-  final int? deeplinkBankId;
+  final int deeplinkBankId;
   final String name;
   final String iconAsset;
 
@@ -10,8 +10,6 @@ class SmartPayBank {
     required this.name,
     required this.iconAsset,
   });
-
-  bool get usesWebPayment => deeplinkBankId == null;
 }
 
 const List<SmartPayBank> smartPayBanks = [
@@ -26,12 +24,6 @@ const List<SmartPayBank> smartPayBanks = [
     deeplinkBankId: 9,
     name: 'Eskhata',
     iconAsset: 'assets/smartpay/eskhata.png',
-  ),
-  SmartPayBank(
-    uiId: 3,
-    deeplinkBankId: null,
-    name: 'DC Next',
-    iconAsset: 'assets/smartpay/dc.png',
   ),
 ];
 

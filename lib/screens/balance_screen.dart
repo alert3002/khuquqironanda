@@ -65,6 +65,32 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
     }
   }
 
+  Future<void> _refreshBalanceFromServer() async {
+    final sync = await ApiService.syncPendingTopUpsAndBalance();
+    final user = await ApiService.getUserProfile();
+    if (!mounted) return;
+    setState(() => _user = user);
+    final pending = sync['pending_count'] as int? ?? 0;
+    if (pending > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Баланс: ${user?.balance ?? "0"} сомонӣ. '
+            '$pending пардохт ҳанӯз дар интизорӣ — «Историяи пардохт» → Навсозӣ.',
+          ),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Баланс навсозӣ шуд: ${user?.balance ?? "0"} сомонӣ'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
   Future<void> _loadUserProfile() async {
     final user = await ApiService.getUserProfile();
     if (mounted) {
@@ -254,8 +280,13 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      _pollPaymentStatus(showSnackOnSuccess: true);
+    var attempts = 0;
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      attempts++;
+      await _pollPaymentStatus(showSnackOnSuccess: attempts <= 3);
+      if (attempts >= 45) {
+        _pollTimer?.cancel();
+      }
     });
   }
 
@@ -455,13 +486,20 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                               style: TextStyle(color: Colors.grey, fontSize: 14),
                             ),
                             const SizedBox(width: 8),
-                            Text(
-                              '${_user?.balance ?? '0'} сомонӣ',
-                              style: const TextStyle(
-                                color: Colors.black,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                            Expanded(
+                              child: Text(
+                                '${_user?.balance ?? '0'} сомонӣ',
+                                style: const TextStyle(
+                                  color: Colors.black,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
+                            ),
+                            IconButton(
+                              tooltip: 'Навсозии баланс',
+                              onPressed: _isPaying ? null : _refreshBalanceFromServer,
+                              icon: const Icon(Icons.refresh_rounded, size: 22),
                             ),
                           ],
                         ),
@@ -486,7 +524,6 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                           children: [
                             _buildWalletLogo('assets/smartpay/alif.png'),
                             _buildWalletLogo('assets/smartpay/eskhata.png'),
-                            _buildWalletLogo('assets/smartpay/dc.png'),
                           ],
                         ),
                       const SizedBox(height: 10),
@@ -649,7 +686,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
   }
 
   Widget _buildBankIcon(SmartPayBank bank) {
-    if (bank.deeplinkBankId == 9) {
+    if (bank.name == 'Eskhata') {
       return DecoratedBox(
         decoration: BoxDecoration(
           color: const Color(0xFF003366),
