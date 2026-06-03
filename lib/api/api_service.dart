@@ -14,6 +14,9 @@ import '../services/legal_documents_cache.dart';
 class ApiService {
   // --- ТАНЗИМОТИ ASOSӢ ---
 
+  static String? _lastAuthErrorMessage;
+  static String? get lastAuthErrorMessage => _lastAuthErrorMessage;
+
   // Target Book ID for Single Book Application
   static const int targetBookId = 1;
 
@@ -212,6 +215,7 @@ class ApiService {
   // --- 2. ПРОФИЛИ КОРБАР ---
 
   static Future<User?> getUserProfile() async {
+    _lastAuthErrorMessage = null;
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/auth/profile/'),
@@ -219,14 +223,21 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        // UTF-8 decode барои забони тоҷикӣ
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         return User.fromJson(data);
+      } else if (response.statusCode == 401) {
+        _lastAuthErrorMessage =
+            'Сессия ба анҷом расид. Лутфан дубора ворид шавед.';
+        print("⚠️ Profile Error: 401");
       } else {
         print("⚠️ Profile Error: ${response.statusCode}");
+        _lastAuthErrorMessage =
+            'Профил бор нашуд. Хатогӣ: ${response.statusCode}';
       }
     } catch (e) {
       print("❌ Error getting profile: $e");
+      _lastAuthErrorMessage =
+          'Хатогии пайвастшавӣ ҳангоми гирифтани профил.';
     }
     return null;
   }
