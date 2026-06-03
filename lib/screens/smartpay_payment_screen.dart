@@ -99,6 +99,8 @@ class _SmartPayPaymentScreenState extends State<SmartPayPaymentScreen>
       return;
     }
 
+    final bank = smartPayBankByUiId(_selectedBankId);
+
     setState(() => _isPaying = true);
     _balanceBefore = _user?.balance;
 
@@ -106,7 +108,7 @@ class _SmartPayPaymentScreenState extends State<SmartPayPaymentScreen>
       final result = await ApiService.initSmartpayPayment(
         amount,
         description: widget.paymentDescription,
-        bankId: _showBanks ? _selectedBankId : null,
+        bankId: _showBanks ? bank?.deeplinkBankId : null,
       );
 
       if (!mounted) return;
@@ -429,12 +431,12 @@ class _SmartPayPaymentScreenState extends State<SmartPayPaymentScreen>
       itemCount: smartPayBanks.length,
       itemBuilder: (context, index) {
         final bank = smartPayBanks[index];
-        final selected = _selectedBankId == bank.id;
+        final selected = _selectedBankId == bank.uiId;
         return Material(
           color: _card,
           borderRadius: BorderRadius.circular(14),
           child: InkWell(
-            onTap: () => setState(() => _selectedBankId = bank.id),
+            onTap: () => setState(() => _selectedBankId = bank.uiId),
             borderRadius: BorderRadius.circular(14),
             child: Container(
               decoration: BoxDecoration(

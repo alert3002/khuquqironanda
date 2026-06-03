@@ -85,7 +85,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
   }
 
   Future<void> _onWalletTap(SmartPayBank bank) async {
-    setState(() => _selectedBankId = bank.id);
+    setState(() => _selectedBankId = bank.uiId);
     final amount = _parseAmount();
     if (amount == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -93,7 +93,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
       );
       return;
     }
-    await _startSmartPayPayment(amount, bankId: bank.id);
+    await _startSmartPayPayment(amount, bankId: bank.deeplinkBankId);
   }
 
   Future<void> _submitPayment() async {
@@ -114,7 +114,11 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
         );
         return;
       }
-      await _startSmartPayPayment(amount, bankId: _selectedBankId);
+      final bank = smartPayBankByUiId(_selectedBankId);
+      await _startSmartPayPayment(
+        amount,
+        bankId: bank?.deeplinkBankId,
+      );
       return;
     }
 
@@ -595,7 +599,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
   Widget _buildSelectableWallets() {
     return Row(
       children: smartPayBanks.map((bank) {
-        final selected = _selectedBankId == bank.id;
+        final selected = _selectedBankId == bank.uiId;
         return Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -645,7 +649,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
   }
 
   Widget _buildBankIcon(SmartPayBank bank) {
-    if (bank.id == 9) {
+    if (bank.deeplinkBankId == 9) {
       return DecoratedBox(
         decoration: BoxDecoration(
           color: const Color(0xFF003366),
