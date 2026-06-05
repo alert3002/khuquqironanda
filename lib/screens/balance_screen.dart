@@ -581,43 +581,138 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                         ),
                       ),
                       const SizedBox(height: 16),
-                      const Text(
-                        'Агар бонк дер кор кунад, баланс баъди тасдиқ автоматӣ нав мешавад. '
-                        'Шумо метавонед ба профил баред — навсозӣ худаш идома меёбад.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          IconButton(
-                            onPressed: () => _openUrl('https://t.me/group1week'),
-                            icon: Image.asset(
-                              'img/telegram.png',
-                              width: 28,
-                              height: 28,
-                              errorBuilder: (_, __, ___) =>
-                                  const Icon(Icons.telegram_outlined),
-                              color: const Color.fromARGB(255, 23, 146, 247),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          IconButton(
-                            onPressed: () => _openUrl('https://wa.me/+992987003002'),
-                            icon: Image.asset(
-                              'img/whatsapp.png',
-                              width: 28,
-                              height: 28,
-                              errorBuilder: (_, __, ___) => const Icon(Icons.chat),
-                              color: Colors.green,
-                            ),
-                          ),
-                        ],
-                      ),
+                      _buildAutoUpdateHint(),
+                      const SizedBox(height: 12),
+                      _buildReceiptSupportCard(),
                     ],
                   ),
                 ),
+    );
+  }
+
+  Widget _buildAutoUpdateHint() {
+    return Text(
+      'Агар бонк дер кор кунад, баланс баъди тасдиқ автоматӣ нав мешавад. '
+      'Шумо метавонед ба профил баред — навсозӣ худаш идома меёбад.',
+      textAlign: TextAlign.center,
+      style: TextStyle(fontSize: 12, color: Colors.grey.shade600, height: 1.4),
+    );
+  }
+
+  Widget _buildReceiptSupportCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.blue.shade50,
+            Colors.indigo.shade50,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.blue.shade100),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.receipt_long_rounded, color: Colors.blue.shade700, size: 32),
+          const SizedBox(height: 10),
+          Text(
+            'Маблағ ба баланс нагузашт?',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: Colors.blue.shade900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Агар пас аз пардохт вақт гузашт ва баланс пур нашуд, '
+            'скриншоти чеки бонкро ба администратор фиристед — мо дастӣ тафтиш мекунем.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.blueGrey.shade800,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _buildContactChip(
+                  label: 'Telegram',
+                  color: const Color(0xFF229ED9),
+                  iconAsset: 'img/telegram.png',
+                  fallbackIcon: Icons.send_rounded,
+                  onTap: () => _openUrl('https://t.me/group1week'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildContactChip(
+                  label: 'WhatsApp',
+                  color: const Color(0xFF25D366),
+                  iconAsset: 'img/whatsapp.png',
+                  fallbackIcon: Icons.chat_rounded,
+                  onTap: () => _openUrl('https://wa.me/+992987003002'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContactChip({
+    required String label,
+    required Color color,
+    required String iconAsset,
+    required IconData fallbackIcon,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset(
+                iconAsset,
+                width: 22,
+                height: 22,
+                errorBuilder: (_, __, ___) =>
+                    Icon(fallbackIcon, size: 22, color: color),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

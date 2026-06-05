@@ -588,6 +588,35 @@ class ApiService {
     }
   }
 
+  /// Public helper for screens (offline-first loading).
+  static Future<bool> hasInternetConnection() => _hasInternetConnection();
+
+  /// Load target book from Hive only (book_{id}, raw JSON, books_cache).
+  static Future<Book?> _loadTargetBookFromAnyCache(int bookId) async {
+    final details = await _loadBookDetailsFromCache(bookId);
+    if (details != null && !isBundledSampleBook(details)) {
+      return details;
+    }
+
+    final cachedBooks = _filterRealBooks(await _loadBooksFromCacheRaw());
+    Book? candidate;
+    for (final book in cachedBooks) {
+      if (book.id == bookId) {
+        candidate = book;
+        break;
+      }
+    }
+    candidate ??= cachedBooks.isNotEmpty ? cachedBooks.first : null;
+
+    if (candidate != null && !isBundledSampleBook(candidate)) {
+      if (candidate.chapters.isNotEmpty) {
+        await _saveBookDetailsToCache(candidate);
+      }
+      return candidate;
+    }
+    return null;
+  }
+
   // Сабти китобҳо дар Hive (Full JSON)
   static Future<void> _saveBooksToCache(List<Book> books) async {
     try {
@@ -734,6 +763,15 @@ class ApiService {
   }
 
   static Future<List<Book>> getBooks() async {
+    if (!await _hasInternetConnection()) {
+      final cached = _filterRealBooks(await _loadBooksFromCacheRaw());
+      if (cached.isNotEmpty) {
+        print('📦 getBooks: offline, loaded ${cached.length} from cache');
+        return cached;
+      }
+      return [];
+    }
+
     // Кӯшиш кардани гирифтани маълумот аз API
     try {
       final response = await http.get(
@@ -795,20 +833,7 @@ class ApiService {
   static Future<Book?> fetchTargetBookCached() async {
     try {
       final selectedId = await getSelectedBookId();
-
-      final details = await _loadBookDetailsFromCache(selectedId);
-      if (details != null && !isBundledSampleBook(details)) {
-        return details;
-      }
-
-      final cachedBooks = _filterRealBooks(await _loadBooksFromCacheRaw());
-      if (cachedBooks.isNotEmpty) {
-        final book = cachedBooks.firstWhere(
-          (b) => b.id == selectedId,
-          orElse: () => cachedBooks.first,
-        );
-        if (book.chapters.isNotEmpty) return book;
-      }
+      return await _loadTargetBookFromAnyCache(selectedId);
     } catch (e) {
       print('⚠️ fetchTargetBookCached: $e');
     }
@@ -818,6 +843,11 @@ class ApiService {
   /// Китоби асосӣ бо ҳамаи бобҳо ва матн — аз /books/{id}/.
   static Future<Book?> fetchTargetBook() async {
     final selectedId = await getSelectedBookId();
+
+    if (!await _hasInternetConnection()) {
+      print('📦 fetchTargetBook: offline, using cache');
+      return _loadTargetBookFromAnyCache(selectedId);
+    }
 
     final details = await getBookDetails(selectedId);
     if (details != null && !isBundledSampleBook(details)) {
@@ -844,15 +874,16 @@ class ApiService {
     try {
       final cached = _filterRealBooks(await _loadBooksFromCacheRaw());
       if (cached.isNotEmpty) {
-        return cached.firstWhere(
+        final book = cached.firstWhere(
           (book) => book.id == selectedId,
           orElse: () => cached.first,
         );
+        if (book.chapters.isNotEmpty) {
+          await _saveBookDetailsToCache(book);
+        }
+        return book;
       }
-      final cachedDetails = await _loadBookDetailsFromCache(selectedId);
-      if (cachedDetails != null && !isBundledSampleBook(cachedDetails)) {
-        return cachedDetails;
-      }
+      return _loadTargetBookFromAnyCache(selectedId);
     } catch (e) {
       print('❌ Error loading target book from cache: $e');
     }
@@ -955,13 +986,18 @@ class ApiService {
 
   // Гирифтани тафсилоти як китоб (бобҳо + матн)
   static Future<Book?> getBookDetails(int bookId) async {
+    if (!await _hasInternetConnection()) {
+      print('📦 getBookDetails: offline, book ID $bookId');
+      return _loadTargetBookFromAnyCache(bookId);
+    }
+
     try {
       final response = await http
           .get(
             Uri.parse('$baseUrl/books/$bookId/'),
             headers: await _getHeaders(),
           )
-          .timeout(const Duration(seconds: 25));
+          .timeout(const Duration(seconds: 12));
 
       if (response.statusCode == 200) {
         final data = _applyReviewAccess(
@@ -976,13 +1012,7 @@ class ApiService {
       print('❌ Error getting book details: $e');
     }
 
-    final cachedBook = await _loadBookDetailsFromCache(bookId);
-    if (cachedBook != null && !isBundledSampleBook(cachedBook)) {
-      print('📦 Loaded book details from cache for book ID: $bookId');
-      return cachedBook;
-    }
-
-    return null;
+    return _loadTargetBookFromAnyCache(bookId);
   }
 
   // Ислоҳи URL-и расмҳо

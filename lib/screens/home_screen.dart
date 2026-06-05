@@ -35,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   bool _isRefreshing = false;
   bool _isPurchasingSubscription = false;
+  bool _offlineWithoutCache = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -97,10 +98,34 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _book = cached;
           _isLoading = false;
+          _offlineWithoutCache = false;
         });
       }
     } catch (e) {
       print('⚠️ Cache load: $e');
+    }
+
+    final online = await ApiService.hasInternetConnection();
+    if (!online) {
+      if (mounted) {
+        setState(() {
+          _book = cached;
+          _isLoading = false;
+          _offlineWithoutCache = cached == null;
+        });
+        if (cached == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Интернет нест. Барои офлайн як бор бо интернет кушоед, то китоб захира шавад.',
+              ),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+      }
+      return;
     }
 
     try {
@@ -109,11 +134,12 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _book = fresh ?? cached;
           _isLoading = false;
+          _offlineWithoutCache = _book == null;
         });
         if (fresh == null && cached == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("Интернет нест ё китоб ёфт нашуд."),
+              content: Text('Китоб ёфт нашуд. Лутфан аз нав кӯшиш кунед.'),
               backgroundColor: Colors.orange,
             ),
           );
@@ -125,6 +151,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _book = cached;
           _isLoading = false;
+          _offlineWithoutCache = cached == null;
         });
         if (cached == null) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -598,18 +625,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildErrorState() {
+    final message = _offlineWithoutCache
+        ? 'Интернет нест ва китоб дар офлайн захира нашудааст.\n\n'
+            'Лутфан як бор бо Wi‑Fi ё мобилӣ кушоед — пас офлайн кор мекунад.'
+        : 'Китоб ёфт нашуд';
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 64, color: Colors.grey[400]),
+            Icon(
+              _offlineWithoutCache ? Icons.wifi_off_rounded : Icons.error_outline,
+              size: 64,
+              color: Colors.grey[400],
+            ),
             const SizedBox(height: 16),
-            const Text(
-              "Китоб ёфт нашуд",
+            Text(
+              message,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 18, color: Colors.grey),
+              style: const TextStyle(fontSize: 16, color: Colors.grey, height: 1.4),
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
