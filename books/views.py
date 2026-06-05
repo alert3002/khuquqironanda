@@ -164,48 +164,76 @@ class PurchaseSubscriptionView(APIView):
 
         plan = get_object_or_404(SubscriptionPlan, id=plan_id, is_active=True)
         user = request.user
+        sub_description = f"Обуна: {plan.book.title} ({plan.name})"
 
-        if user.balance < plan.price:
-            return Response({
-                'error': 'Маблағ кифоя нест',
-                'required': str(plan.price),
-                'current_balance': str(user.balance)
-            }, status=400)
-
-        current_subscription = Subscription.objects.filter(
+        # Пешгирии дубли харид (дукмара пахш / retry)
+        recent_dup = Transaction.objects.filter(
             user=user,
-            plan=plan,
-            expires_at__gt=timezone.now(),
-        ).order_by('-expires_at').first()
-
-        if current_subscription:
-            new_expires_at = current_subscription.expires_at + timezone.timedelta(days=plan.days)
-        else:
-            new_expires_at = timezone.now() + timezone.timedelta(days=plan.days)
+            status='SUCCESS',
+            description=sub_description,
+            created_at__gte=timezone.now() - timezone.timedelta(seconds=60),
+        ).exists()
+        if recent_dup:
+            active = Subscription.objects.filter(
+                user=user,
+                plan=plan,
+                expires_at__gt=timezone.now(),
+            ).order_by('-expires_at').first()
+            return Response({
+                'message': 'Обуна аллакай фаъол аст',
+                'new_balance': str(user.balance),
+                'expires_at': active.expires_at.strftime('%Y-%m-%d %H:%M:%S') if active else None,
+                'already_active': True,
+            })
 
         try:
             with db_transaction.atomic():
-                user.balance -= plan.price
-                user.save()
+                user = User.objects.select_for_update().get(pk=user.pk)
+                if user.balance < plan.price:
+                    return Response({
+                        'error': 'Маблағ кифоя нест',
+                        'required': str(plan.price),
+                        'current_balance': str(user.balance),
+                    }, status=400)
 
-                Subscription.objects.create(
-                    user=user,
-                    plan=plan,
-                    expires_at=new_expires_at,
+                current_subscription = (
+                    Subscription.objects.select_for_update()
+                    .filter(
+                        user=user,
+                        plan=plan,
+                        expires_at__gt=timezone.now(),
+                    )
+                    .order_by('-expires_at')
+                    .first()
                 )
+
+                if current_subscription:
+                    current_subscription.expires_at += timezone.timedelta(days=plan.days)
+                    current_subscription.save(update_fields=['expires_at'])
+                    new_expires_at = current_subscription.expires_at
+                else:
+                    new_expires_at = timezone.now() + timezone.timedelta(days=plan.days)
+                    current_subscription = Subscription.objects.create(
+                        user=user,
+                        plan=plan,
+                        expires_at=new_expires_at,
+                    )
+
+                user.balance -= plan.price
+                user.save(update_fields=['balance'])
 
                 Transaction.objects.create(
                     user=user,
                     amount=plan.price,
                     status='SUCCESS',
                     transaction_id=f"SUB-{uuid.uuid4().hex[:8].upper()}",
-                    description=f"Обуна: {plan.book.title} ({plan.name})"
+                    description=sub_description,
                 )
 
             return Response({
                 'message': 'Обуна бо муваффақият фаъол шуд!',
                 'new_balance': str(user.balance),
-                'expires_at': new_expires_at.strftime('%Y-%m-%d %H:%M:%S')
+                'expires_at': new_expires_at.strftime('%Y-%m-%d %H:%M:%S'),
             })
         except Exception as e:
             return Response({'error': f'Хатогӣ ҳангоми харид: {str(e)}'}, status=500)
@@ -495,6 +523,7 @@ class SmartPayRefreshPendingView(APIView):
 
         items = []
         for txn in pending_qs:
+            txn.refresh_from_db()
             sp_id = extract_smartpay_id_from_description(txn.description)
             items.append({
                 'transaction_id': txn.transaction_id,
@@ -664,6 +693,8 @@ class SmartPayWebhookView(APIView):
         token = (
             request.headers.get('api_token')
             or request.headers.get('Api-Token')
+            or request.headers.get('X-Api-Token')
+            or request.headers.get('x-api-token')
             or request.headers.get('x-app-token')
             or request.headers.get('X-App-Token')
             or ''
@@ -712,6 +743,13 @@ class SmartPayWebhookView(APIView):
             invoice_id=invoice_id,
         )
         if not txn:
+            import logging
+            logging.getLogger(__name__).warning(
+                'SmartPay webhook: transaction not found order_id=%s smartpay_id=%s invoice_id=%s',
+                order_id,
+                smartpay_id,
+                invoice_id,
+            )
             return Response({'status': 'accepted'})
 
         if status in ('success', 'paid', 'completed'):

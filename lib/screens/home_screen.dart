@@ -34,6 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Book? _book;
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _isPurchasingSubscription = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -89,16 +90,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadData() async {
+    Book? cached;
     try {
-      final selectedBook = await ApiService.fetchTargetBook();
-
-      if (mounted) {
+      cached = await ApiService.fetchTargetBookCached();
+      if (mounted && cached != null) {
         setState(() {
-          _book = selectedBook;
+          _book = cached;
           _isLoading = false;
         });
-        
-        if (selectedBook == null) {
+      }
+    } catch (e) {
+      print('⚠️ Cache load: $e');
+    }
+
+    try {
+      final fresh = await ApiService.fetchTargetBook();
+      if (mounted) {
+        setState(() {
+          _book = fresh ?? cached;
+          _isLoading = false;
+        });
+        if (fresh == null && cached == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Интернет нест ё китоб ёфт нашуд."),
@@ -111,15 +123,17 @@ class _HomeScreenState extends State<HomeScreen> {
       print("❌ Error loading book data: $e");
       if (mounted) {
         setState(() {
+          _book = cached;
           _isLoading = false;
-          _book = null;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Хатогӣ дар боркунии маълумот: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
+        if (cached == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("Хатогӣ дар боркунии маълумот: $e"),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     }
   }
@@ -129,7 +143,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() {
         _isRefreshing = true;
-        _isLoading = true;
+        if (_book == null) _isLoading = true;
       });
     }
     await _loadData();
@@ -317,19 +331,30 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (confirm != true) return;
+    if (_isPurchasingSubscription) return;
 
+    setState(() => _isPurchasingSubscription = true);
     try {
       Map<String, dynamic> result = await ApiService.purchaseBook(_book!.id, planId);
 
       if (result['success'] == true) {
         if (mounted && _book != null) {
+          DateTime? expiresAt;
+          final expiresRaw = result['expires_at']?.toString();
+          if (expiresRaw != null && expiresRaw.isNotEmpty) {
+            try {
+              expiresAt = DateTime.parse(expiresRaw);
+            } catch (_) {}
+          }
           setState(() {
-            _book = _book!.withFullAccess();
+            _book = _book!.withFullAccess(subscriptionExpiresAt: expiresAt);
             _isLoading = false;
           });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(result['message'] ?? "Табрик! Обуна харида шуд."),
+              content: Text(
+                result['message']?.toString() ?? 'Табрик! Обуна харида шуд.',
+              ),
               backgroundColor: Colors.green,
             ),
           );
@@ -363,6 +388,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isPurchasingSubscription = false);
     }
   }
 

@@ -344,6 +344,56 @@ class ApiService {
 
   // --- 2. ПРОФИЛИ КОРБАР ---
 
+  static const String _cachedUserProfileKey = 'cached_user_profile';
+
+  static Future<void> _saveUserProfileToCache(User user) async {
+    try {
+      await Hive.box('settings').put(_cachedUserProfileKey, user.toJson());
+    } catch (e) {
+      print('❌ Error caching user profile: $e');
+    }
+  }
+
+  static User? _loadUserProfileFromCache() {
+    try {
+      final raw = Hive.box('settings').get(_cachedUserProfileKey);
+      if (raw is Map) {
+        return User.fromJson(Map<String, dynamic>.from(raw));
+      }
+    } catch (e) {
+      print('❌ Error loading cached profile: $e');
+    }
+    return null;
+  }
+
+  /// Зуд аз кеш — барои намоиши фаврӣ бе интернет.
+  static Future<User?> getUserProfileCached() async {
+    if (isReviewMode()) return _buildReviewUser();
+    return _loadUserProfileFromCache();
+  }
+
+  static Future<void> clearUserProfileCache() async {
+    try {
+      await Hive.box('settings').delete(_cachedUserProfileKey);
+    } catch (_) {}
+  }
+
+  static Future<void> updateCachedUserBalance(String newBalance) async {
+    final cached = _loadUserProfileFromCache();
+    if (cached == null) return;
+    await _saveUserProfileToCache(User(
+      id: cached.id,
+      phone: cached.phone,
+      firstName: cached.firstName,
+      lastName: cached.lastName,
+      balance: newBalance,
+      birthDate: cached.birthDate,
+      telegramId: cached.telegramId,
+      telegramUsername: cached.telegramUsername,
+      loginLabel: cached.loginLabel,
+    ));
+  }
+
   static Future<User?> getUserProfile() async {
     _lastAuthErrorMessage = null;
     try {
@@ -355,35 +405,57 @@ class ApiService {
         return _buildReviewUser();
       }
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/auth/profile/'),
-        headers: await _getHeaders(),
-      );
+      if (token == null || token.toString().isEmpty) {
+        return null;
+      }
+
+      final cached = _loadUserProfileFromCache();
+      final online = await _hasInternetConnection();
+
+      if (!online) {
+        if (cached != null) {
+          print('📦 Profile loaded from cache (offline)');
+          return cached;
+        }
+        _lastAuthErrorMessage =
+            'Интернет нест. Профил дар кеш нест — лутфан пайваст шавед.';
+        return null;
+      }
+
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/auth/profile/'),
+            headers: await _getHeaders(),
+          )
+          .timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
-        return User.fromJson(data);
+        final user = User.fromJson(data);
+        await _saveUserProfileToCache(user);
+        return user;
       } else if (response.statusCode == 401) {
         _lastAuthErrorMessage =
             'Сессия ба анҷом расид ё иҷозатнома нодуруст аст. Лутфан дубора ворид шавед.';
-        if (reviewMode) {
-          return _buildReviewUser();
-        }
+        if (reviewMode) return _buildReviewUser();
+        if (cached != null) return cached;
       } else {
         print("⚠️ Profile Error: ${response.statusCode}");
         _lastAuthErrorMessage =
             'Профил бор нашуд. Хатогӣ: ${response.statusCode}';
-        if (reviewMode) {
-          return _buildReviewUser();
-        }
+        if (reviewMode) return _buildReviewUser();
+        if (cached != null) return cached;
       }
     } catch (e) {
       print("❌ Error getting profile: $e");
+      if (isReviewMode()) return _buildReviewUser();
+      final cached = _loadUserProfileFromCache();
+      if (cached != null) {
+        print('📦 Profile fallback to cache after error');
+        return cached;
+      }
       _lastAuthErrorMessage =
           'Хатогии пайвастшавӣ ҳангоми гирифтани профил.';
-      if (isReviewMode()) {
-        return _buildReviewUser();
-      }
     }
     return null;
   }
@@ -415,6 +487,9 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+        if (responseData is Map<String, dynamic>) {
+          await _saveUserProfileToCache(User.fromJson(responseData));
+        }
         return {
           'success': true,
           'data': responseData,
@@ -429,6 +504,9 @@ class ApiService {
 
         if (patchResponse.statusCode == 200) {
           final responseData = jsonDecode(utf8.decode(patchResponse.bodyBytes));
+          if (responseData is Map<String, dynamic>) {
+            await _saveUserProfileToCache(User.fromJson(responseData));
+          }
           return {
             'success': true,
             'data': responseData,
@@ -944,14 +1022,27 @@ class ApiService {
       '$baseUrl/purchase-subscription/',
       {
         'plan_id': planId,
-        'book_id': bookId, // Include book_id if backend supports it
+        'book_id': bookId,
       },
     );
-    
-    // Агар харид муваффақ бошад, кешро навсозӣ мекунем
+
     if (result['success'] == true) {
-      await markBookAccessInCache(bookId);
-      print("✅ Book $bookId subscription synced to cache");
+      final data = result['data'];
+      if (data is Map<String, dynamic>) {
+        await markBookAccessInCache(bookId);
+        final newBalance = data['new_balance']?.toString();
+        if (newBalance != null && newBalance.isNotEmpty) {
+          await updateCachedUserBalance(newBalance);
+        }
+        return {
+          'success': true,
+          'message': data['message']?.toString(),
+          'expires_at': data['expires_at']?.toString(),
+          'new_balance': newBalance,
+          'already_active': data['already_active'] == true,
+          'data': data,
+        };
+      }
     }
 
     return result;

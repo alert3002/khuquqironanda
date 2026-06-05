@@ -36,4 +36,18 @@ class User {
       loginLabel: json['login_label']?.toString() ?? '',
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'phone': phone,
+      'first_name': firstName,
+      'last_name': lastName,
+      'balance': balance,
+      'birth_date': birthDate,
+      'telegram_id': telegramId,
+      'telegram_username': telegramUsername,
+      'login_label': loginLabel,
+    };
+  }
 }

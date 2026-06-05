@@ -1,7 +1,15 @@
 """Helpers for matching SmartPay invoices to local Transaction rows."""
+import logging
 import re
 
+from django.db import transaction as db_transaction
+
 from .models import Transaction
+
+logger = logging.getLogger(__name__)
+
+SMARTPAY_TAG_RE = re.compile(r'\s*\[smartpay_id:[^\]]+\]', re.IGNORECASE)
+INVOICE_TAG_RE = re.compile(r'\s*\[invoice_id:[^\]]+\]', re.IGNORECASE)
 
 
 def format_smartpay_id(raw):
@@ -119,12 +127,22 @@ def extract_smartpay_id_from_description(description):
 
 
 def apply_smartpay_success(txn):
-    """Mark transaction SUCCESS and credit user balance (idempotent)."""
-    if txn.status == 'SUCCESS':
-        return False
-    txn.status = 'SUCCESS'
-    txn.save(update_fields=['status'])
-    user = txn.user
-    user.balance += txn.amount
-    user.save(update_fields=['balance'])
+    """Mark transaction SUCCESS and credit user balance (idempotent, atomic)."""
+    with db_transaction.atomic():
+        locked = Transaction.objects.select_for_update().get(pk=txn.pk)
+        if locked.status == 'SUCCESS':
+            return False
+        locked.status = 'SUCCESS'
+        locked.save(update_fields=['status'])
+        from django.contrib.auth import get_user_model
+        user = get_user_model().objects.select_for_update().get(pk=locked.user_id)
+        user.balance += locked.amount
+        user.save(update_fields=['balance'])
+        logger.info(
+            'SmartPay SUCCESS txn=%s user=%s amount=%s balance=%s',
+            locked.transaction_id,
+            user.pk,
+            locked.amount,
+            user.balance,
+        )
     return True

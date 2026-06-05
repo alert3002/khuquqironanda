@@ -15,6 +15,12 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / '.env', override=False)
+except ImportError:
+    pass
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
@@ -68,11 +74,26 @@ APP_NAME = 'Ҳуқуқи ронанда'
 # iOS App Store (StoreKit / JWS bundleId санҷиш)
 APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.bookkhuquqronanda.week')
 
-# SmartPay Settings
-SMARTPAY_API_TOKEN = 'def4e0372504f712a035a17ba570e42fadfb6ba9d0029df9639267a246936e8f'
-SMARTPAY_API_URL = 'https://sandbox.smartpay.tj/api/merchant/invoices/'
-SMARTPAY_RETURN_URL = 'https://1week.tj/success'
-SMARTPAY_WEBHOOK_TOKEN = '4eed94124c86b03b9cf772a32accc2ad094f69656abfa0ce1bdeb7f66c882f0'
+# SmartPay Settings (production: set in .env)
+_smartpay_base = os.environ.get('SMARTPAY_API_BASE_URL', '').strip().rstrip('/')
+SMARTPAY_API_TOKEN = (
+    os.environ.get('SMARTPAY_API_KEY', '').strip()
+    or os.environ.get('SMARTPAY_API_TOKEN', '').strip()
+    or 'def4e0372504f712a035a17ba570e42fadfb6ba9d0029df9639267a246936e8f'
+)
+SMARTPAY_API_URL = (
+    os.environ.get('SMARTPAY_API_URL', '').strip()
+    or (f'{_smartpay_base}/invoices/' if _smartpay_base else '')
+    or 'https://sandbox.smartpay.tj/api/merchant/invoices/'
+)
+SMARTPAY_RETURN_URL = os.environ.get(
+    'SMARTPAY_RETURN_URL',
+    'https://1week.tj/success',
+).strip()
+SMARTPAY_WEBHOOK_TOKEN = os.environ.get(
+    'SMARTPAY_WEBHOOK_TOKEN',
+    '4eed94124c86b03b9cf772a32accc2ad094f69656abfa0ce1bdeb7f66c882f0',
+).strip()
 
 # Dushanbe City Payment Gateway Settings
 DC_MERCHANT_ID = '10100002'

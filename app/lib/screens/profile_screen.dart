@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../api/api_service.dart';
 import '../models/user_model.dart';
+import '../services/pending_topup_watcher.dart';
 import '../utils/formatters.dart';
+import '../widgets/pending_topup_banner.dart';
 import 'login_screen.dart';
 import 'balance_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -13,10 +16,11 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserver {
   User? _user;
   bool _isLoading = true;
   bool _isSaving = false;
+  late final PendingTopUpWatcher _watcher;
   
   // Controllers for editable fields
   final TextEditingController _firstNameController = TextEditingController();
@@ -25,14 +29,92 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    _watcher = PendingTopUpWatcher.instance;
+    _watcher.addListener(_onWatcherUpdate);
+    WidgetsBinding.instance.addObserver(this);
     _loadUserProfile();
+    _syncBalanceFromServer();
   }
 
   @override
   void dispose() {
+    _watcher.removeListener(_onWatcherUpdate);
+    WidgetsBinding.instance.removeObserver(this);
     _firstNameController.dispose();
     _lastNameController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncBalanceFromServer();
+    }
+  }
+
+  void _onWatcherUpdate() {
+    if (!mounted) return;
+    setState(() {});
+    if (_watcher.justSucceeded) {
+      final amount = _watcher.lastCreditedAmount;
+      _watcher.consumeSuccessFlag();
+      _loadUserProfile();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            amount != null && amount.isNotEmpty
+                ? 'Баланс нав шуд! +$amount сомонӣ'
+                : 'Баланс нав шуд!',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Future<void> _syncBalanceFromServer() async {
+    await _watcher.syncNow(silent: true);
+    if (!mounted) return;
+    await _loadUserProfile();
+  }
+
+  Future<void> _openTelegramContact() async {
+    final uri = Uri.parse('https://t.me/group1week');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Telegram кушода нашуд.")),
+        );
+      }
+    }
+  }
+
+  void _showIOSContactAdminDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Обуна ва пардохт"),
+        content: const Text(
+          "Дар версияи iOS пардохтҳо дар дохили барнома ғайрифаъоланд.\n\n"
+          "Барои пайваст кардани бобҳои иловагӣ ё пур кардани дастрасӣ, "
+          "лутфан ба администратор дар Telegram муроҷиат намоед.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Бекор"),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _openTelegramContact();
+            },
+            icon: const Icon(Icons.send),
+            label: const Text("Telegram"),
+          ),
+        ],
+      ),
+    );
   }
 
   String _profileContactLine(User user) {
@@ -56,13 +138,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadUserProfile() async {
+    final cached = await ApiService.getUserProfileCached();
+    if (mounted && cached != null) {
+      setState(() {
+        _user = cached;
+        _firstNameController.text = cached.firstName;
+        _lastNameController.text = cached.lastName;
+        _isLoading = false;
+      });
+    }
+
     final user = await ApiService.getUserProfile();
     if (mounted) {
       setState(() {
-        _user = user;
-        if (user != null) {
-          _firstNameController.text = user.firstName;
-          _lastNameController.text = user.lastName;
+        _user = user ?? cached;
+        if (_user != null) {
+          _firstNameController.text = _user!.firstName;
+          _lastNameController.text = _user!.lastName;
         }
         _isLoading = false;
       });
@@ -143,8 +235,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (confirm == true) {
       // Пок кардани токен ва маълумоти корбар
+      await ApiService.clearUserProfileCache();
       var box = Hive.box('settings');
-      await ApiService.clearReviewMode();
       await box.delete('token');
       await box.delete('login_date');
       await box.delete('phone');
@@ -221,11 +313,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
     }
-    return Center(
+    return const Center(
       child: Text(
-        ApiService.lastAuthErrorMessage ?? "Маълумоти корбар ёфт нашуд",
-        textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 16, color: Colors.grey),
+        "Маълумоти корбар ёфт нашуд",
+        style: TextStyle(fontSize: 16, color: Colors.grey),
       ),
     );
   }
@@ -234,7 +325,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const BalanceScreen()),
-    );
+    ).then((_) => _syncBalanceFromServer());
   }
 
   Widget _buildBalanceCard() {
@@ -374,8 +465,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       
       if (result['success'] == true) {
         // Пок кардани токен ва маълумоти корбар
+        await ApiService.clearUserProfileCache();
         var box = Hive.box('settings');
-        await ApiService.clearReviewMode();
         await box.delete('token');
         await box.delete('login_date');
         await box.delete('phone');
@@ -547,6 +638,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 16),
 
                         _buildBalanceCard(),
+                        PendingTopUpBanner(watcher: _watcher),
                         const SizedBox(height: 24),
 
                         // Save Changes Button
@@ -620,7 +712,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                             child: const Text(
-                              "Нест кардани ҳисоб ",
+                              "Нест кардани ҳисоб",
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,

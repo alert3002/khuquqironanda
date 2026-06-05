@@ -117,17 +117,21 @@ class AppleStoreTransactionAdmin(admin.ModelAdmin):
 
 @admin.register(Subscription)
 class SubscriptionAdmin(admin.ModelAdmin):
-    list_display = ('user', 'plan', 'purchased_at', 'expires_at')
-    list_filter = ('plan__book',)
+    list_display = ('user', 'plan', 'purchased_at', 'expires_at', 'is_currently_active')
+    list_filter = ('plan__book', 'plan')
     search_fields = ('user__phone', 'plan__name')
     readonly_fields = ('purchased_at',)
+
+    @admin.display(boolean=True, description='Фаъол')
+    def is_currently_active(self, obj):
+        return obj.is_active()
 
 
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
     list_display = ('transaction_id', 'user', 'amount', 'status', 'created_at')
     list_filter = ('status',)
-    search_fields = ('transaction_id', 'user__phone')
+    search_fields = ('transaction_id', 'user__phone', 'description')
     readonly_fields = ('created_at',)
 
 

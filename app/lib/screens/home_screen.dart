@@ -1,10 +1,8 @@
-import 'dart:io' show Platform;
-
 import 'package:app/screens/balance_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api/api_service.dart';
-import '../services/apple_iap_service.dart';
 import '../models/book_model.dart';
 import '../models/subscription_plan_model.dart';
 import '../models/user_model.dart';
@@ -36,14 +34,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Book? _book;
   bool _isLoading = true;
   bool _isRefreshing = false;
-  bool _backgroundSync = false;
+  bool _isPurchasingSubscription = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
-    _loadDataFast();
+    _loadData();
   }
 
   @override
@@ -52,54 +50,67 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  /// Аввал кнопкаҳо аз кеш; навсозӣ дар пасзамина.
-  Future<void> _loadDataFast() async {
-    final cached = await ApiService.fetchTargetBookCached();
-    if (!mounted) return;
-    final validCache =
-        cached != null && !ApiService.isBundledSampleBook(cached);
-    setState(() {
-      _book = validCache ? cached : null;
-      _isLoading = !validCache;
-    });
-    if (validCache) {
-      _syncFromServer();
-    } else {
-      await _loadData();
+  Future<void> _openTelegramContact() async {
+    final uri = Uri.parse('https://t.me/group1week');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Telegram кушода нашуд.")),
+        );
+      }
     }
   }
 
-  Future<void> _syncFromServer() async {
-    if (_backgroundSync) return;
-    _backgroundSync = true;
+  void _showIOSContactAdminDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Обуна ва бобҳои иловагӣ"),
+        content: const Text(
+          "Дар версияи iOS пардохтҳо дар дохили барнома ғайрифаъоланд.\n\n"
+          "Барои пайваст кардани бобҳои иловагӣ ё гирифтани дастрасии пурра, "
+          "лутфан ба администратор дар Telegram муроҷиат намоед.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Бекор"),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _openTelegramContact();
+            },
+            icon: const Icon(Icons.send),
+            label: const Text("Telegram"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadData() async {
+    Book? cached;
     try {
-      final id = await ApiService.getSelectedBookId();
-      final fresh = await ApiService.getBookDetails(id);
-      if (!mounted) return;
-      if (fresh != null && !ApiService.isBundledSampleBook(fresh)) {
+      cached = await ApiService.fetchTargetBookCached();
+      if (mounted && cached != null) {
         setState(() {
-          _book = fresh;
+          _book = cached;
           _isLoading = false;
         });
       }
     } catch (e) {
-      print('⚠️ Background book sync: $e');
-    } finally {
-      _backgroundSync = false;
+      print('⚠️ Cache load: $e');
     }
-  }
 
-  Future<void> _loadData() async {
     try {
-      final selectedBook = await ApiService.fetchTargetBook();
-
+      final fresh = await ApiService.fetchTargetBook();
       if (mounted) {
         setState(() {
-          _book = selectedBook;
+          _book = fresh ?? cached;
           _isLoading = false;
         });
-        
-        if (selectedBook == null) {
+        if (fresh == null && cached == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Интернет нест ё китоб ёфт нашуд."),
@@ -112,36 +123,32 @@ class _HomeScreenState extends State<HomeScreen> {
       print("❌ Error loading book data: $e");
       if (mounted) {
         setState(() {
+          _book = cached;
           _isLoading = false;
-          _book = null;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Хатогӣ дар боркунии маълумот: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
+        if (cached == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("Хатогӣ дар боркунии маълумот: $e"),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     }
   }
 
   Future<void> _refreshBook() async {
     if (_isRefreshing) return;
-    setState(() => _isRefreshing = true);
-    try {
-      final id = await ApiService.getSelectedBookId();
-      final fresh = await ApiService.getBookDetails(id);
-      if (!mounted) return;
-      if (fresh != null && !ApiService.isBundledSampleBook(fresh)) {
-        setState(() {
-          _book = fresh;
-          _isLoading = false;
-        });
-      } else {
-        await _loadData();
-      }
-    } finally {
-      if (mounted) setState(() => _isRefreshing = false);
+    if (mounted) {
+      setState(() {
+        _isRefreshing = true;
+        if (_book == null) _isLoading = true;
+      });
+    }
+    await _loadData();
+    if (mounted) {
+      setState(() => _isRefreshing = false);
     }
   }
 
@@ -257,76 +264,6 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final selectedPlan = _book!.plans.firstWhere((p) => p.id == planId);
-
-    // iOS: In‑App Purchase (StoreKit), на SmartPay/баланс
-    if (Platform.isIOS) {
-      final pid = selectedPlan.appleProductId;
-      if (pid == null || pid.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Ин нақша дар App Store Connect ҳанӯз пайваст нашудааст. Лутфан дар админ Django майдони «Apple Product ID»-ро пур кунед.',
-              ),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-        return;
-      }
-
-      try {
-        final jws = await AppleIapService.instance.buyAndGetServerJws(pid);
-        if (jws == null || jws.isEmpty) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Харид бекор шуд'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-          return;
-        }
-
-        final result = await ApiService.confirmAppleIap(
-          planId: planId,
-          signedTransactionInfo: jws,
-        );
-
-        if (result['success'] == true) {
-          final data = result['data'] as Map<String, dynamic>?;
-          final msg = data?['message'] as String? ?? 'Обуна фаъол шуд (Apple).';
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(msg), backgroundColor: Colors.green),
-            );
-          }
-          await _refreshBook();
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(result['error'] ?? 'Хатогӣ'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Apple IAP: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-      return;
-    }
-
     // Гирифтани баланси корбар
     User? user;
     try {
@@ -351,6 +288,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final userBalance = double.tryParse(user.balance) ?? 0.0;
+    final selectedPlan = _book!.plans.firstWhere((p) => p.id == planId);
 
     // Санҷиши баланс
     if (userBalance < selectedPlan.price) {
@@ -393,19 +331,30 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (confirm != true) return;
+    if (_isPurchasingSubscription) return;
 
+    setState(() => _isPurchasingSubscription = true);
     try {
       Map<String, dynamic> result = await ApiService.purchaseBook(_book!.id, planId);
 
       if (result['success'] == true) {
         if (mounted && _book != null) {
+          DateTime? expiresAt;
+          final expiresRaw = result['expires_at']?.toString();
+          if (expiresRaw != null && expiresRaw.isNotEmpty) {
+            try {
+              expiresAt = DateTime.parse(expiresRaw);
+            } catch (_) {}
+          }
           setState(() {
-            _book = _book!.withFullAccess();
+            _book = _book!.withFullAccess(subscriptionExpiresAt: expiresAt);
             _isLoading = false;
           });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(result['message'] ?? "Табрик! Обуна харида шуд."),
+              content: Text(
+                result['message']?.toString() ?? 'Табрик! Обуна харида шуд.',
+              ),
               backgroundColor: Colors.green,
             ),
           );
@@ -439,6 +388,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isPurchasingSubscription = false);
     }
   }
 

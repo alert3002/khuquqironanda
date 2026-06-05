@@ -7,7 +7,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../api/api_service.dart';
 import '../data/smartpay_banks.dart';
 import '../models/user_model.dart';
+import '../services/pending_topup_watcher.dart';
 import '../utils/region_utils.dart';
+import '../widgets/pending_topup_banner.dart';
 import 'payment_history_screen.dart';
 import 'payment_webview.dart';
 
@@ -34,49 +36,71 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
   final TextEditingController _amountController = TextEditingController();
   int? _selectedBankId;
   bool _isPaying = false;
-  String? _pendingOrderId;
   String? _balanceBefore;
-  Timer? _pollTimer;
+  late final PendingTopUpWatcher _watcher;
 
   bool get _useSmartPayWallets => isTajikistanUser(_user);
 
   @override
   void initState() {
     super.initState();
+    _watcher = PendingTopUpWatcher.instance;
+    _watcher.addListener(_onWatcherUpdate);
     WidgetsBinding.instance.addObserver(this);
     if (widget.initialAmount != null && widget.initialAmount! > 0) {
       _amountController.text = widget.initialAmount!.toStringAsFixed(2);
     }
     _loadUserProfile();
+    unawaited(_watcher.syncNow(silent: true));
+  }
+
+  void _onWatcherUpdate() {
+    if (!mounted) return;
+    setState(() {});
+    if (_watcher.justSucceeded) {
+      final amount = _watcher.lastCreditedAmount;
+      _watcher.consumeSuccessFlag();
+      unawaited(_loadUserProfile());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            amount != null && amount.isNotEmpty
+                ? 'Баланс пур шуд! +$amount сомонӣ'
+                : 'Баланс пур шуд!',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
   }
 
   @override
   void dispose() {
+    _watcher.removeListener(_onWatcherUpdate);
     WidgetsBinding.instance.removeObserver(this);
-    _pollTimer?.cancel();
     _amountController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _pendingOrderId != null) {
-      _pollPaymentStatus();
+    if (state == AppLifecycleState.resumed && _watcher.hasPending) {
+      unawaited(_watcher.syncNow());
     }
   }
 
   Future<void> _refreshBalanceFromServer() async {
-    final sync = await ApiService.syncPendingTopUpsAndBalance();
+    final sync = await _watcher.syncNow();
     final user = await ApiService.getUserProfile();
     if (!mounted) return;
     setState(() => _user = user);
-    final pending = sync['pending_count'] as int? ?? 0;
+    final pending = sync['pending_count'] as int? ?? _watcher.pendingCount;
     if (pending > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             'Баланс: ${user?.balance ?? "0"} сомонӣ. '
-            '$pending пардохт ҳанӯз дар интизорӣ — «Историяи пардохт» → Навсозӣ.',
+            'Пардохт дар интизорӣ — баъди тасдиқи бонк автоматӣ нав мешавад.',
           ),
           duration: const Duration(seconds: 4),
         ),
@@ -92,11 +116,20 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
   }
 
   Future<void> _loadUserProfile() async {
+    final cached = await ApiService.getUserProfileCached();
+    if (mounted && cached != null) {
+      setState(() {
+        _user = cached;
+        _errorMessage = null;
+        _isLoading = false;
+      });
+    }
+
     final user = await ApiService.getUserProfile();
     if (mounted) {
       setState(() {
-        _user = user;
-        _errorMessage = user == null ? ApiService.lastAuthErrorMessage : null;
+        _user = user ?? cached;
+        _errorMessage = _user == null ? ApiService.lastAuthErrorMessage : null;
         _isLoading = false;
       });
     }
@@ -182,11 +215,24 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
       final paymentLink = result['payment_link']?.toString();
 
       if (orderId != null && orderId.isNotEmpty) {
-        _pendingOrderId = orderId;
-        _startPolling();
+        await _watcher.trackPayment(
+          orderId: orderId,
+          amount: amount.toStringAsFixed(2),
+          balanceBeforeValue: _balanceBefore,
+        );
       }
 
       if (deeplink != null && deeplink.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Барномаи бонк кушода мешавад. Баъди пардохт баланс автоматӣ нав мешавад.',
+              ),
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
         await _openDeeplink(deeplink, paymentLink);
         return;
       }
@@ -268,74 +314,14 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
     if (!mounted) return;
 
     if (paymentResult == PaymentResultStatus.success) {
-      await _onPaymentSuccess();
+      await _watcher.syncNow();
     } else if (paymentResult == PaymentResultStatus.failed) {
       _showSnack('Пардохт рад шуд', error: true);
     } else if (paymentResult == PaymentResultStatus.canceled) {
       _showSnack('Пардохт бекор шуд', error: true);
     } else {
-      await _pollPaymentStatus(showSnackOnSuccess: true);
+      await _watcher.syncNow();
     }
-  }
-
-  void _startPolling() {
-    _pollTimer?.cancel();
-    var attempts = 0;
-    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
-      attempts++;
-      await _pollPaymentStatus(showSnackOnSuccess: attempts <= 3);
-      if (attempts >= 45) {
-        _pollTimer?.cancel();
-      }
-    });
-  }
-
-  Future<void> _pollPaymentStatus({bool showSnackOnSuccess = false}) async {
-    final orderId = _pendingOrderId;
-    if (orderId == null) return;
-
-    final statusResult = await ApiService.checkSmartpayStatus(orderId);
-    final status = statusResult['status']?.toString().toUpperCase();
-
-    if (status == 'SUCCESS') {
-      _pollTimer?.cancel();
-      _pendingOrderId = null;
-      if (showSnackOnSuccess) await _onPaymentSuccess();
-      return;
-    }
-    if (status == 'FAILED') {
-      _pollTimer?.cancel();
-      _pendingOrderId = null;
-      if (mounted) _showSnack('Пардохт рад шуд', error: true);
-      return;
-    }
-
-    await _refreshBalanceIfChanged();
-  }
-
-  Future<void> _refreshBalanceIfChanged() async {
-    final user = await ApiService.getUserProfile();
-    if (!mounted || user == null) return;
-
-    final prev = double.tryParse(_balanceBefore ?? '0') ?? 0;
-    final next = double.tryParse(user.balance) ?? 0;
-    if ((next - prev).abs() > 0.01) {
-      _pollTimer?.cancel();
-      _pendingOrderId = null;
-      setState(() => _user = user);
-      await _onPaymentSuccess();
-    }
-  }
-
-  Future<void> _onPaymentSuccess() async {
-    await _loadUserProfile();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Баланс пур шуд!'),
-        backgroundColor: Colors.green,
-      ),
-    );
   }
 
   void _showSnack(String message, {bool error = false}) {
@@ -465,6 +451,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
                     children: [
+                      PendingTopUpBanner(watcher: _watcher),
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(20),
@@ -595,7 +582,8 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                       ),
                       const SizedBox(height: 16),
                       const Text(
-                        'Агар пардохт кардеду балансатон пур нашуд чеки пардохторо ба администратори баронма равон кунед!',
+                        'Агар бонк дер кор кунад, баланс баъди тасдиқ автоматӣ нав мешавад. '
+                        'Шумо метавонед ба профил баред — навсозӣ худаш идома меёбад.',
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
