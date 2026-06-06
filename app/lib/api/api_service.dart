@@ -627,6 +627,63 @@ class ApiService {
     }
   }
 
+  /// Download and cache target book for offline (after login / app start).
+  static Future<void> warmOfflineCache() async {
+    if (!await hasInternetConnection()) return;
+    try {
+      final token = Hive.box('settings').get('token');
+      if (token == null || token.toString().trim().isEmpty) return;
+      final id = await getSelectedBookId();
+      final book = await getBookDetails(id);
+      if (book != null && book.chapters.isNotEmpty) {
+        await persistBookForOffline(book);
+      }
+    } catch (e) {
+      print('⚠️ warmOfflineCache: $e');
+    }
+  }
+
+  static Future<bool> hasOfflineBookReady() async {
+    try {
+      final id = await getSelectedBookId();
+      final book = await _loadTargetBookFromAnyCache(id);
+      return book != null && book.chapters.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Book? _bookFromCachePayload(dynamic payload) {
+    if (payload == null) return null;
+    try {
+      Map<String, dynamic> map;
+      if (payload is String) {
+        final decoded = jsonDecode(payload);
+        if (decoded is! Map) return null;
+        map = Map<String, dynamic>.from(decoded);
+      } else if (payload is Map) {
+        map = Map<String, dynamic>.from(payload);
+      } else {
+        return null;
+      }
+      final data = _applyReviewAccess(map);
+      final book = Book.fromJson(Map<String, dynamic>.from(data));
+      if (isBundledSampleBook(book)) return null;
+      return book;
+    } catch (e) {
+      print('⚠️ _bookFromCachePayload: $e');
+      return null;
+    }
+  }
+
+  static Future<void> _saveBookJsonRaw(int bookId, String rawJson) async {
+    try {
+      await Hive.box('cache').put('book_${bookId}_json', rawJson);
+    } catch (e) {
+      print('⚠️ _saveBookJsonRaw: $e');
+    }
+  }
+
   static Map<String, dynamic> _bookToCacheMap(Book book) {
     return {
       'id': book.id,
@@ -652,6 +709,16 @@ class ApiService {
 
   /// Load target book from Hive only (book_{id}, raw JSON, books_cache).
   static Future<Book?> _loadTargetBookFromAnyCache(int bookId) async {
+    try {
+      final rawApi = Hive.box('cache').get('book_${bookId}_json');
+      final fromApi = _bookFromCachePayload(rawApi);
+      if (fromApi != null && fromApi.chapters.isNotEmpty) {
+        return fromApi;
+      }
+    } catch (e) {
+      print('⚠️ load book_${bookId}_json: $e');
+    }
+
     final details = await _loadBookDetailsFromCache(bookId);
     if (details != null && !isBundledSampleBook(details)) {
       return details;
@@ -682,6 +749,7 @@ class ApiService {
       var box = Hive.box('cache_books');
       final booksJson = books.map(_bookToCacheMap).toList();
       await box.put('books_cache', booksJson);
+      await box.put('books_cache_json', jsonEncode(booksJson));
       print("✅ Books cached successfully (${books.length} books)");
     } catch (e) {
       print("❌ Error caching books: $e");
@@ -692,6 +760,16 @@ class ApiService {
   static Future<List<Book>> _loadBooksFromCache() async {
     try {
       var box = Hive.box('cache_books');
+      final jsonStr = box.get('books_cache_json');
+      if (jsonStr is String && jsonStr.isNotEmpty) {
+        final decoded = jsonDecode(jsonStr);
+        if (decoded is List) {
+          final data = _applyReviewAccess(decoded) as List;
+          return data
+              .map((item) => Book.fromJson(Map<String, dynamic>.from(item)))
+              .toList();
+        }
+      }
       final booksJson = box.get('books_cache');
       if (booksJson != null && booksJson is List) {
         final data = _applyReviewAccess(booksJson) as List;
@@ -767,23 +845,26 @@ class ApiService {
   // Сабти тафсилоти як китоб дар Hive
   static Future<void> _saveBookDetailsToCache(Book book) async {
     try {
+      final map = _bookToCacheMap(book);
+      final encoded = jsonEncode(map);
       var box = Hive.box('cache_books');
-      await box.put('book_${book.id}', _bookToCacheMap(book));
-      print("✅ Book details cached successfully for book ID: ${book.id}");
+      await box.put('book_${book.id}', encoded);
+      await box.put('book_${book.id}_map', map);
+      print("✅ Book details cached for ID ${book.id} (${encoded.length} bytes)");
     } catch (e) {
       print("❌ Error caching book details: $e");
     }
   }
 
-  // Хондани тафсилоти як китоб аз Hive
   static Future<Book?> _loadBookDetailsFromCache(int bookId) async {
     try {
       var box = Hive.box('cache_books');
       final bookJson = box.get('book_$bookId');
-      if (bookJson != null && bookJson is Map) {
-        final data = _applyReviewAccess(Map<String, dynamic>.from(bookJson));
-        return Book.fromJson(Map<String, dynamic>.from(data));
-      }
+      final fromPayload = _bookFromCachePayload(bookJson);
+      if (fromPayload != null) return fromPayload;
+
+      final legacyMap = box.get('book_${bookId}_map');
+      return _bookFromCachePayload(legacyMap);
     } catch (e) {
       print("❌ Error loading book details from cache: $e");
     }
@@ -1015,8 +1096,10 @@ class ApiService {
           .timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
+        final rawJsonBody = utf8.decode(response.bodyBytes);
+        await _saveBookJsonRaw(bookId, rawJsonBody);
         final data = _applyReviewAccess(
-          jsonDecode(utf8.decode(response.bodyBytes)),
+          jsonDecode(rawJsonBody),
         );
         final book = Book.fromJson(data);
         await persistBookForOffline(book);

@@ -109,6 +109,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
         var box = Hive.box('settings');
         await ApiService.enableReviewMode(phone: widget.phone);
         await box.delete('is_guest');
+        unawaited(ApiService.warmOfflineCache());
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const HomeScreen()),
@@ -127,6 +128,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
         var box = Hive.box('settings');
         await ApiService.clearReviewMode();
         await box.delete('is_guest');
+        unawaited(ApiService.warmOfflineCache());
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const HomeScreen()),

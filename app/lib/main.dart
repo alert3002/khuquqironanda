@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/home_screen.dart';
 import 'services/pending_topup_watcher.dart';
+import 'api/api_service.dart';
 import 'utils/pdf_js_assets.dart';
 
 // Security Service - барои идоракунии ҳимояи экран
@@ -61,6 +62,10 @@ void main() async {
   } catch (_) {}
 
   PendingTopUpWatcher.instance.init();
+
+  Future.microtask(() async {
+    await ApiService.warmOfflineCache();
+  });
 
   runApp(const MyApp());
 }

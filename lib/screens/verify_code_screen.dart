@@ -102,13 +102,14 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
     String code = _codeController.text.trim();
 
-    // ЛОГИКАИ ДЕМО: Агар рақам ва код ба маълумоти модератор мувофиқ бошад
-    // Мо мустақиман ба HomeScreen мегузарем, то модератор ба хатогӣ дучор нашавад.
-    if (widget.phone == "+992921234567" && code == "3002") {
+    // ЛОГИКАИ ДЕМО барои review/login-и Google Play.
+    if (widget.phone == ApiService.reviewPhone && code == ApiService.reviewCode) {
       setState(() => _isLoading = false);
       if (mounted) {
         var box = Hive.box('settings');
+        await ApiService.enableReviewMode(phone: widget.phone);
         await box.delete('is_guest');
+        unawaited(ApiService.warmOfflineCache());
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const HomeScreen()),
@@ -125,7 +126,9 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
     if (result['success'] == true) {
       if (mounted) {
         var box = Hive.box('settings');
+        await ApiService.clearReviewMode();
         await box.delete('is_guest');
+        unawaited(ApiService.warmOfflineCache());
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const HomeScreen()),

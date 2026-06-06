@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/screens/balance_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -113,7 +115,9 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = false;
           _offlineWithoutCache = _book == null;
         });
-        if (_book == null) {
+        if (_book != null) {
+          unawaited(ApiService.persistBookForOffline(_book!));
+        } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
@@ -139,6 +143,9 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = false;
           _offlineWithoutCache = _book == null;
         });
+        if (_book != null) {
+          unawaited(ApiService.persistBookForOffline(_book!));
+        }
         if (_book == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -475,6 +482,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _openReader({int? chapterId}) {
     if (_book != null) {
+      unawaited(ApiService.persistBookForOffline(_book!));
       Navigator.push(
         context,
         MaterialPageRoute(

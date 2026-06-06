@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/home_screen.dart';
 import 'services/pending_topup_watcher.dart';
+import 'api/api_service.dart';
 import 'utils/pdf_js_assets.dart';
 
 // Security Service - барои идоракунии ҳимояи экран
@@ -43,7 +44,6 @@ void main() async {
   await Hive.openBox('cache_books'); // Барои сабти Китобҳо (Офлайн)
   await Hive.openBox('cache'); // Барои сабти Raw JSON (Forever Offline)
 
-  // pdf.js барои санадҳои PDF (офлайн, бе CDN)
   Future.microtask(PdfJsAssets.ensureLoaded);
 
   // 2. Хомӯш кардани ҳимояи экран (Allow screenshots)
@@ -55,12 +55,17 @@ void main() async {
     final box = Hive.box('settings');
     final token = box.get('token');
     final isGuest = box.get('is_guest', defaultValue: false) == true;
-    if (token == null && !isGuest) {
+    final isReviewMode = box.get('review_mode', defaultValue: false) == true;
+    if (token == null && !isGuest && !isReviewMode) {
       await box.put('is_guest', true);
     }
   } catch (_) {}
 
   PendingTopUpWatcher.instance.init();
+
+  Future.microtask(() async {
+    await ApiService.warmOfflineCache();
+  });
 
   runApp(const MyApp());
 }

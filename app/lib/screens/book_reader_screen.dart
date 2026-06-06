@@ -44,6 +44,7 @@ class _BookReaderScreenState extends State<BookReaderScreen> {
   void initState() {
     super.initState();
     _loadAuthHeaders();
+    unawaited(ApiService.persistBookForOffline(widget.book));
     if (widget.initialChapterId != null) {
       _originalPages = _prepareSingleChapter(widget.initialChapterId!);
     } else {
