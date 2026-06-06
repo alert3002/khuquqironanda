@@ -94,10 +94,10 @@ class _HomeScreenState extends State<HomeScreen> {
     Book? cached;
     try {
       cached = await ApiService.fetchTargetBookCached();
-      if (mounted && cached != null) {
+      if (mounted) {
         setState(() {
           _book = cached;
-          _isLoading = false;
+          _isLoading = cached == null;
           _offlineWithoutCache = false;
         });
       }
@@ -109,11 +109,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!online) {
       if (mounted) {
         setState(() {
-          _book = cached;
+          _book = cached ?? _book;
           _isLoading = false;
-          _offlineWithoutCache = cached == null;
+          _offlineWithoutCache = _book == null;
         });
-        if (cached == null) {
+        if (_book == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
@@ -130,13 +130,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final fresh = await ApiService.fetchTargetBook();
+      if (fresh != null) {
+        await ApiService.persistBookForOffline(fresh);
+      }
       if (mounted) {
         setState(() {
-          _book = fresh ?? cached;
+          _book = fresh ?? cached ?? _book;
           _isLoading = false;
           _offlineWithoutCache = _book == null;
         });
-        if (fresh == null && cached == null) {
+        if (_book == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Китоб ёфт нашуд. Лутфан аз нав кӯшиш кунед.'),
@@ -149,11 +152,11 @@ class _HomeScreenState extends State<HomeScreen> {
       print("❌ Error loading book data: $e");
       if (mounted) {
         setState(() {
-          _book = cached;
+          _book = cached ?? _book;
           _isLoading = false;
-          _offlineWithoutCache = cached == null;
+          _offlineWithoutCache = _book == null;
         });
-        if (cached == null) {
+        if (_book == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text("Хатогӣ дар боркунии маълумот: $e"),

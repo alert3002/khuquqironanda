@@ -580,16 +580,75 @@ class ApiService {
   static Future<bool> _hasInternetConnection() async {
     try {
       final results = await Connectivity().checkConnectivity();
-      // connectivity_plus v6+ returns List<ConnectivityResult>
-      return results.any((r) => r != ConnectivityResult.none);
+      if (results.every((r) => r == ConnectivityResult.none)) {
+        return false;
+      }
     } catch (e) {
-      print("❌ Connectivity check error: $e");
+      print('❌ Connectivity check error: $e');
+      return false;
+    }
+    // iOS/Android often report Wi‑Fi/mobile while there is no real internet.
+    return _probeServerReachable();
+  }
+
+  static Future<bool> _probeServerReachable() async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/books/$targetBookId/'),
+            headers: await _getHeaders(auth: false),
+          )
+          .timeout(const Duration(seconds: 4));
+      return response.statusCode >= 200 && response.statusCode < 500;
+    } catch (e) {
+      print('📴 Server unreachable (offline mode): $e');
       return false;
     }
   }
 
   /// Public helper for screens (offline-first loading).
   static Future<bool> hasInternetConnection() => _hasInternetConnection();
+
+  /// Save full book for offline reading (call after every successful online load).
+  static Future<void> persistBookForOffline(Book book) async {
+    if (book.chapters.isEmpty) return;
+    await _saveBookDetailsToCache(book);
+    await _saveBooksToCache([book]);
+    try {
+      final settings = Hive.box('settings');
+      await settings.put('offline_book_id', book.id);
+      await settings.put(
+        'offline_book_saved_at',
+        DateTime.now().toIso8601String(),
+      );
+      print('✅ Offline book ready: id=${book.id}, chapters=${book.chapters.length}');
+    } catch (e) {
+      print('⚠️ persistBookForOffline settings: $e');
+    }
+  }
+
+  static Map<String, dynamic> _bookToCacheMap(Book book) {
+    return {
+      'id': book.id,
+      'title': book.title,
+      'description': book.description,
+      'cover_image': book.coverImage,
+      'price': book.price,
+      'is_purchased': book.isPurchased,
+      'chapters': book.chapters.map((ch) => {
+        'id': ch.id,
+        'title': ch.title,
+        'content': ch.content,
+        'is_free': ch.isFree,
+        'is_premium': ch.isPremium,
+        'order': ch.order,
+        'is_purchased': ch.isPurchased,
+      }).toList(),
+      'plans': book.plans.map((p) => p.toJson()).toList(),
+      if (book.expiresAt != null)
+        'expires_at': book.expiresAt!.toIso8601String(),
+    };
+  }
 
   /// Load target book from Hive only (book_{id}, raw JSON, books_cache).
   static Future<Book?> _loadTargetBookFromAnyCache(int bookId) async {
@@ -621,22 +680,7 @@ class ApiService {
   static Future<void> _saveBooksToCache(List<Book> books) async {
     try {
       var box = Hive.box('cache_books');
-      final booksJson = books.map((book) => {
-        'id': book.id,
-        'title': book.title,
-        'description': book.description,
-        'cover_image': book.coverImage,
-        'price': book.price,
-        'is_purchased': book.isPurchased,
-        'chapters': book.chapters.map((ch) => {
-          'id': ch.id,
-          'title': ch.title,
-          'content': ch.content,
-          'is_free': ch.isFree,
-          'order': ch.order,
-          'is_purchased': ch.isPurchased,
-        }).toList(),
-      }).toList();
+      final booksJson = books.map(_bookToCacheMap).toList();
       await box.put('books_cache', booksJson);
       print("✅ Books cached successfully (${books.length} books)");
     } catch (e) {
@@ -724,23 +768,7 @@ class ApiService {
   static Future<void> _saveBookDetailsToCache(Book book) async {
     try {
       var box = Hive.box('cache_books');
-      final bookJson = {
-        'id': book.id,
-        'title': book.title,
-        'description': book.description,
-        'cover_image': book.coverImage,
-        'price': book.price,
-        'is_purchased': book.isPurchased,
-        'chapters': book.chapters.map((ch) => {
-          'id': ch.id,
-          'title': ch.title,
-          'content': ch.content,
-          'is_free': ch.isFree,
-          'order': ch.order,
-          'is_purchased': ch.isPurchased,
-        }).toList(),
-      };
-      await box.put('book_${book.id}', bookJson);
+      await box.put('book_${book.id}', _bookToCacheMap(book));
       print("✅ Book details cached successfully for book ID: ${book.id}");
     } catch (e) {
       print("❌ Error caching book details: $e");
@@ -843,14 +871,16 @@ class ApiService {
   /// Китоби асосӣ бо ҳамаи бобҳо ва матн — аз /books/{id}/.
   static Future<Book?> fetchTargetBook() async {
     final selectedId = await getSelectedBookId();
+    final cached = await _loadTargetBookFromAnyCache(selectedId);
 
     if (!await _hasInternetConnection()) {
       print('📦 fetchTargetBook: offline, using cache');
-      return _loadTargetBookFromAnyCache(selectedId);
+      return cached;
     }
 
     final details = await getBookDetails(selectedId);
     if (details != null && !isBundledSampleBook(details)) {
+      await persistBookForOffline(details);
       return details;
     }
 
@@ -861,9 +891,11 @@ class ApiService {
           (book) => book.id == selectedId,
           orElse: () => books.first,
         );
-        if (target.chapters.isNotEmpty) return target;
+        if (target.chapters.isNotEmpty) {
+          await persistBookForOffline(target);
+          return target;
+        }
 
-        final cached = await _loadBookDetailsFromCache(selectedId);
         if (cached != null && !isBundledSampleBook(cached)) return cached;
         return target;
       }
@@ -871,24 +903,7 @@ class ApiService {
       print('❌ Error fetching target book: $e');
     }
 
-    try {
-      final cached = _filterRealBooks(await _loadBooksFromCacheRaw());
-      if (cached.isNotEmpty) {
-        final book = cached.firstWhere(
-          (book) => book.id == selectedId,
-          orElse: () => cached.first,
-        );
-        if (book.chapters.isNotEmpty) {
-          await _saveBookDetailsToCache(book);
-        }
-        return book;
-      }
-      return _loadTargetBookFromAnyCache(selectedId);
-    } catch (e) {
-      print('❌ Error loading target book from cache: $e');
-    }
-
-    return null;
+    return cached ?? await _loadTargetBookFromAnyCache(selectedId);
   }
 
   static Future<LegalDocumentsPageData?> fetchLegalDocuments() async {
@@ -997,14 +1012,14 @@ class ApiService {
             Uri.parse('$baseUrl/books/$bookId/'),
             headers: await _getHeaders(),
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
         final data = _applyReviewAccess(
           jsonDecode(utf8.decode(response.bodyBytes)),
         );
         final book = Book.fromJson(data);
-        await _saveBookDetailsToCache(book);
+        await persistBookForOffline(book);
         return book;
       }
       print('⚠️ Book Details Error: ${response.statusCode} ${response.body}');
