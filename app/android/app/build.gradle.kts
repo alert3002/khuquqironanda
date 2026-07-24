@@ -7,6 +7,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Firebase: танҳо агар google-services.json гузошта шуда бошад
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 // 1. Танзими хондани файлҳои калид (Keystore)
 val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties()

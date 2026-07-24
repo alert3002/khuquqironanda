@@ -143,18 +143,6 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
     return amount;
   }
 
-  Future<void> _onWalletTap(SmartPayBank bank) async {
-    setState(() => _selectedBankId = bank.uiId);
-    final amount = _parseAmount();
-    if (amount == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Аввал маблағро ворид кунед')),
-      );
-      return;
-    }
-    await _startSmartPayPayment(amount, bankId: bank.deeplinkBankId);
-  }
-
   Future<void> _submitPayment() async {
     final amount = _parseAmount();
     if (amount == null) {
@@ -166,25 +154,119 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
       return;
     }
 
+    // Агар Alif интихоб шуда бошад → пардохти Alif Банк (Корти Милли)
+    if (_useSmartPayWallets && _selectedBankId == 1) {
+      await _startAlifPayment(amount);
+      return;
+    }
+
+    // Тугмаи «Пардохт» — саҳифаи SmartPay (веб)
     if (_useSmartPayWallets) {
-      if (_selectedBankId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ҳамёни пардохтро интихоб кунед')),
-        );
-        return;
-      }
-      final bank = smartPayBankByUiId(_selectedBankId);
-      await _startSmartPayPayment(
-        amount,
-        bankId: bank?.deeplinkBankId,
-      );
+      await _startSmartPayPayment(amount, openSmartPayPage: true);
       return;
     }
 
     await _processPaymentLegacy(amount);
   }
 
-  Future<void> _startSmartPayPayment(double amount, {int? bankId}) async {
+  Future<void> _onWalletTap(SmartPayBank bank) async {
+    setState(() => _selectedBankId = bank.uiId);
+    final amount = _parseAmount();
+    if (amount == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Аввал маблағро ворид кунед')),
+      );
+      return;
+    }
+    // Alif → web.alif.tj | SmartPay → саҳифаи SmartPay (ҳамаи бонкҳо)
+    if (bank.isAlif) {
+      await _startAlifPayment(amount);
+      return;
+    }
+    await _startSmartPayPayment(amount, openSmartPayPage: true);
+  }
+
+  Future<void> _startAlifPayment(double amount) async {
+    if (_isPaying) return;
+
+    setState(() => _isPaying = true);
+    _balanceBefore = _user?.balance;
+
+    try {
+      final result = await ApiService.initAlifPayment(
+        amount,
+        description: widget.paymentDescription ??
+            'Пур кардани баланси барномаи ҳуқуқи ронанда: ${amount.toStringAsFixed(2)} сомонӣ',
+      );
+
+      if (!mounted) return;
+      setState(() => _isPaying = false);
+
+      if (result['success'] != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result['error']?.toString() ?? 'Хатогӣ дар оғози пардохти Alif',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      final orderId = result['order_id']?.toString();
+      final htmlForm = result['html_form']?.toString();
+      final paymentLink = result['payment_link']?.toString() ??
+          result['payment_url']?.toString();
+
+      if (orderId != null && orderId.isNotEmpty) {
+        await _watcher.trackPayment(
+          orderId: orderId,
+          amount: amount.toStringAsFixed(2),
+          balanceBeforeValue: _balanceBefore,
+        );
+      }
+
+      if ((htmlForm != null && htmlForm.isNotEmpty) ||
+          (paymentLink != null && paymentLink.isNotEmpty)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Саҳифаи Alif Банк кушода мешавад. Баъди пардохт баланс автоматӣ нав мешавад.',
+              ),
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+        await _openWebPayment(paymentLink ?? '', htmlForm: htmlForm);
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Пайванди Alif дастрас нест'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isPaying = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Хатогии пайвастшавӣ: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _startSmartPayPayment(
+    double amount, {
+    int? bankId,
+    bool openSmartPayPage = false,
+  }) async {
     if (_isPaying) return;
 
     setState(() => _isPaying = true);
@@ -194,7 +276,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
       final result = await ApiService.initSmartpayPayment(
         amount,
         description: widget.paymentDescription,
-        bankId: bankId,
+        bankId: openSmartPayPage ? null : bankId,
       );
 
       if (!mounted) return;
@@ -220,6 +302,24 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
           amount: amount.toStringAsFixed(2),
           balanceBeforeValue: _balanceBefore,
         );
+      }
+
+      // Тугмаи Пардохт → саҳифаи SmartPay
+      if (openSmartPayPage) {
+        if (paymentLink != null && paymentLink.isNotEmpty) {
+          await _openWebPayment(
+            paymentLink,
+            htmlForm: result['html_form']?.toString(),
+          );
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Пайванди SmartPay дастрас нест'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
       }
 
       if (deeplink != null && deeplink.isNotEmpty) {
@@ -313,14 +413,27 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
 
     if (!mounted) return;
 
-    if (paymentResult == PaymentResultStatus.success) {
-      await _watcher.syncNow();
+    // Баъди бозгашт аз SmartPay — фавран статус ва балансро навсозӣ
+    final sync = await _watcher.syncNow();
+    await _loadUserProfile();
+
+    if (!mounted) return;
+
+    if (paymentResult == PaymentResultStatus.success ||
+        _watcher.justSucceeded ||
+        ((sync['became_success'] as int? ?? 0) > 0)) {
+      // Snack аз watcher меояд агар justSucceeded
+      if (!_watcher.justSucceeded) {
+        _showSnack('Баланс навсозӣ шуд: ${_user?.balance ?? "0"} сомонӣ');
+      }
     } else if (paymentResult == PaymentResultStatus.failed) {
       _showSnack('Пардохт рад шуд', error: true);
     } else if (paymentResult == PaymentResultStatus.canceled) {
       _showSnack('Пардохт бекор шуд', error: true);
-    } else {
-      await _watcher.syncNow();
+    } else if (_watcher.hasPending) {
+      _showSnack(
+        'Пардохт дар интизорӣ. Баланс баъди тасдиқи SmartPay автоматӣ пур мешавад.',
+      );
     }
   }
 
@@ -495,9 +608,9 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                       const Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          'Пур кардани баланси барномаи ҲУҚУҚИ РОНАНДА бо ҳамёнҳои:',
+                          'Усули пардохт:',
                           style: TextStyle(
-                            fontSize: 18,
+                            fontSize: 17,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -510,7 +623,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
                             _buildWalletLogo('assets/smartpay/alif.png'),
-                            _buildWalletLogo('assets/smartpay/eskhata.png'),
+                            _buildWalletLogo('assets/smartpay/smartpay.png'),
                           ],
                         ),
                       const SizedBox(height: 10),
@@ -549,11 +662,15 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                         ),
                       ),
                       if (_useSmartPayWallets) ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Ё ҳамёнро пахш кунед — пардохт дар барномаи бонк кушода мешавад.',
+                        const SizedBox(height: 10),
+                        Text(
+                          _selectedBankId == 1
+                              ? 'Alif — пардохт бо Корти Милли'
+                              : _selectedBankId == 2
+                                  ? 'SmartPay — бо ҳамаи ҳамёни бонкҳо'
+                                  : 'Alif ё SmartPay-ро интихоб кунед, ё «Пардохт» пахш кунед',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                          style: const TextStyle(fontSize: 12, color: Colors.grey),
                         ),
                       ],
                       const SizedBox(height: 12),
@@ -582,8 +699,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
                       ),
                       const SizedBox(height: 16),
                       _buildAutoUpdateHint(),
-                      const SizedBox(height: 12),
-                      _buildReceiptSupportCard(),
+                      // Ёрии чек — дар профил болои баланс нишон дода мешавад
                     ],
                   ),
                 ),
@@ -592,171 +708,155 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
 
   Widget _buildAutoUpdateHint() {
     return Text(
-      'Агар бонк дер кор кунад, баланс баъди тасдиқ автоматӣ нав мешавад. '
-      'Шумо метавонед ба профил баред — навсозӣ худаш идома меёбад.',
+      'Баъди пардохт баланс автоматӣ нав мешавад. '
+      'Агар нагузашт — дар профил чекро ба админ фиристед.',
       textAlign: TextAlign.center,
       style: TextStyle(fontSize: 12, color: Colors.grey.shade600, height: 1.4),
     );
   }
 
-  Widget _buildReceiptSupportCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.blue.shade50,
-            Colors.indigo.shade50,
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.blue.shade100),
-      ),
-      child: Column(
-        children: [
-          Icon(Icons.receipt_long_rounded, color: Colors.blue.shade700, size: 32),
-          const SizedBox(height: 10),
-          Text(
-            'Маблағ ба баланс нагузашт?',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: Colors.blue.shade900,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Агар пас аз пардохт вақт гузашт ва баланс пур нашуд, '
-            'скриншоти чеки бонкро ба администратор фиристед — мо дастӣ тафтиш мекунем.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.blueGrey.shade800,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _buildContactChip(
-                  label: 'Telegram',
-                  color: const Color(0xFF229ED9),
-                  iconAsset: 'img/telegram.png',
-                  fallbackIcon: Icons.send_rounded,
-                  onTap: () => _openUrl('https://t.me/group1week'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildContactChip(
-                  label: 'WhatsApp',
-                  color: const Color(0xFF25D366),
-                  iconAsset: 'img/whatsapp.png',
-                  fallbackIcon: Icons.chat_rounded,
-                  onTap: () => _openUrl('https://wa.me/+992987003002'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildContactChip({
-    required String label,
-    required Color color,
-    required String iconAsset,
-    required IconData fallbackIcon,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color.withValues(alpha: 0.35)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Image.asset(
-                iconAsset,
-                width: 22,
-                height: 22,
-                errorBuilder: (_, __, ___) =>
-                    Icon(fallbackIcon, size: 22, color: color),
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: color,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildSelectableWallets() {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: smartPayBanks.map((bank) {
         final selected = _selectedBankId == bank.uiId;
+        final accent = bank.isSmartPay
+            ? const Color(0xFF0D7377)
+            : const Color(0xFF00A651);
         return Expanded(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 5),
             child: Material(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
+              elevation: selected ? 4 : 1,
+              shadowColor: accent.withValues(alpha: 0.28),
+              borderRadius: BorderRadius.circular(18),
               child: InkWell(
                 onTap: _isPaying ? null : () => _onWalletTap(bank),
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+                borderRadius: BorderRadius.circular(18),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.fromLTRB(10, 16, 10, 14),
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(18),
                     border: Border.all(
-                      color: selected ? Colors.blue : Colors.grey.shade300,
-                      width: selected ? 2 : 1,
+                      color: selected ? accent : const Color(0xFFE8ECF1),
+                      width: selected ? 2.2 : 1,
                     ),
+                    gradient: selected
+                        ? LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              accent.withValues(alpha: 0.10),
+                              Colors.white,
+                            ],
+                          )
+                        : null,
                   ),
                   child: Column(
                     children: [
-                      SizedBox(
-                        width: 52,
-                        height: 52,
-                        child: _buildBankIcon(bank),
-                      ),
-                      const SizedBox(height: 4),
+                      if (bank.isSmartPay)
+                        Container(
+                          width: double.infinity,
+                          height: 64,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0D7377),
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF0D7377)
+                                    .withValues(alpha: 0.28),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Image.asset(
+                            bank.iconAsset,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Center(
+                              child: Text(
+                                'SmartPay',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          width: 64,
+                          height: 64,
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Color(0xFF14C45A),
+                                Color(0xFF00A651),
+                                Color(0xFF008C44),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF00A651)
+                                    .withValues(alpha: 0.30),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.asset(
+                              bank.iconAsset,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.account_balance_wallet,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 12),
                       Text(
                         bank.name,
                         textAlign: TextAlign.center,
-                        maxLines: 2,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: selected ? Colors.blue : Colors.black87,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: selected ? accent : const Color(0xFF1A1A1A),
                         ),
                       ),
+                      if (bank.subtitle.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        Text(
+                          bank.subtitle,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            height: 1.3,
+                            fontWeight: FontWeight.w500,
+                            color: selected
+                                ? accent.withValues(alpha: 0.95)
+                                : Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -765,32 +865,6 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
           ),
         );
       }).toList(),
-    );
-  }
-
-  Widget _buildBankIcon(SmartPayBank bank) {
-    if (bank.name == 'Eskhata') {
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xFF003366),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: const Center(
-          child: Text(
-            'E',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      );
-    }
-    return Image.asset(
-      bank.iconAsset,
-      fit: BoxFit.contain,
-      errorBuilder: (_, __, ___) => const Icon(Icons.account_balance_wallet),
     );
   }
 

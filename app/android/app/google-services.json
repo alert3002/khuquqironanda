@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "696220730257",
+    "project_id": "huquqhironanda",
+    "storage_bucket": "huquqhironanda.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:696220730257:android:9db979a70370a9ff091030",
+        "android_client_info": {
+          "package_name": "com.khuquqironanda.week"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBjIfgySmGphLYNEsfxj9OBAQY4MLzdVJU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

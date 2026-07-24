@@ -1,30 +1,42 @@
 class SmartPayBank {
   final int uiId;
-  final int deeplinkBankId;
+  /// null = саҳифаи умумии SmartPay (ҳамаи бонкҳо)
+  final int? deeplinkBankId;
   final String name;
+  final String subtitle;
   final String iconAsset;
+  /// alif | smartpay
+  final String kind;
 
   const SmartPayBank({
     required this.uiId,
     required this.deeplinkBankId,
     required this.name,
+    this.subtitle = '',
     required this.iconAsset,
+    required this.kind,
   });
+
+  bool get isAlif => kind == 'alif';
+  bool get isSmartPay => kind == 'smartpay';
 }
 
-/// SmartPay white-label: only Alif (8) and Eskhata (9).
 const List<SmartPayBank> smartPayBanks = [
   SmartPayBank(
     uiId: 1,
     deeplinkBankId: 8,
-    name: 'Alif Mobi',
+    name: 'Alif',
+    subtitle: 'Корти Милли',
     iconAsset: 'assets/smartpay/alif.png',
+    kind: 'alif',
   ),
   SmartPayBank(
     uiId: 2,
-    deeplinkBankId: 9,
-    name: 'Eskhata',
-    iconAsset: 'assets/smartpay/eskhata.png',
+    deeplinkBankId: null,
+    name: 'SmartPay',
+    subtitle: 'Бо ҳамаи ҳамёни бонкҳо',
+    iconAsset: 'assets/smartpay/smartpay.png',
+    kind: 'smartpay',
   ),
 ];
 

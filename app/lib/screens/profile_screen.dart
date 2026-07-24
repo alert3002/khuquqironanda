@@ -5,6 +5,7 @@ import '../models/user_model.dart';
 import '../services/pending_topup_watcher.dart';
 import '../utils/formatters.dart';
 import '../widgets/pending_topup_banner.dart';
+import '../widgets/balance_help_card.dart';
 import 'login_screen.dart';
 import 'balance_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -386,10 +387,10 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                           Text(
                             '${_user!.balance} сомонӣ',
                             style: const TextStyle(
-                              fontSize: 30,
-                              fontWeight: FontWeight.w800,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
                               color: Colors.white,
-                              letterSpacing: -0.5,
+                              letterSpacing: -0.3,
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -637,6 +638,8 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                         ),
                         const SizedBox(height: 16),
 
+                        const BalanceHelpCard(compact: true),
+                        const SizedBox(height: 12),
                         _buildBalanceCard(),
                         PendingTopUpBanner(watcher: _watcher),
                         const SizedBox(height: 24),

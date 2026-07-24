@@ -101,10 +101,11 @@ class PendingTopUpWatcher extends ChangeNotifier with WidgetsBindingObserver {
 
   void _startTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+    // Аввал зудтар (ҳар 2 сония), баъд ҳар 3 сония
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) {
       _pollTick++;
-      unawaited(syncNow(silent: _pollTick > 2));
-      if (_pollTick >= 300) {
+      unawaited(syncNow(silent: _pollTick > 3));
+      if (_pollTick >= 450) {
         _timer?.cancel();
         statusMessage =
             'Бонк боз ҳам кор мекунад. Баланс баъди тасдиқ автоматӣ нав мешавад — ба профил баред ё икони навсозиро пахш кунед.';
@@ -119,21 +120,36 @@ class PendingTopUpWatcher extends ChangeNotifier with WidgetsBindingObserver {
     }
     _syncing = true;
     try {
+      var success = false;
+      String? balance;
+
       if (isWatching) {
-        await ApiService.checkSmartpayStatus(activeOrderId!);
+        final statusResult =
+            await ApiService.checkPaymentStatus(activeOrderId!);
+        final status = statusResult['status']?.toString().toUpperCase();
+        balance = statusResult['balance']?.toString();
+        if (status == 'SUCCESS' || statusResult['credited'] == true) {
+          success = true;
+        } else if (status == 'FAILED') {
+          await _clearActive(
+            message: 'Пардохт рад шуд ё бекор карда шуд.',
+          );
+          notifyListeners();
+          return {'success': false, 'failed': true};
+        }
       }
 
       final sync = await ApiService.syncPendingTopUpsAndBalance();
       pendingCount = sync['pending_count'] as int? ?? 0;
       final becameSuccess = sync['became_success'] as int? ?? 0;
-      final balance = sync['balance']?.toString();
+      balance ??= sync['balance']?.toString();
 
-      var success = false;
-      if (isWatching) {
+      if (isWatching && !success) {
         final statusResult =
-            await ApiService.checkSmartpayStatus(activeOrderId!);
+            await ApiService.checkPaymentStatus(activeOrderId!);
         final status = statusResult['status']?.toString().toUpperCase();
-        if (status == 'SUCCESS') {
+        balance = statusResult['balance']?.toString() ?? balance;
+        if (status == 'SUCCESS' || statusResult['credited'] == true) {
           success = true;
         } else if (status == 'FAILED') {
           await _clearActive(

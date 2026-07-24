@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../api/api_service.dart';
-import '../data/traffic_rules_data.dart' as fallback;
 import '../models/legal_document_model.dart';
 import '../services/legal_documents_cache.dart';
 import 'document_pdf_screen.dart';
@@ -62,25 +61,10 @@ class _LegalDocumentsListScreenState extends State<LegalDocumentsListScreen> {
       return cached;
     }
 
-    return _fallbackFromLocal();
-  }
-
-  LegalDocumentsPageData _fallbackFromLocal() {
     return LegalDocumentsPageData(
       title: 'Рӯйхати санадҳои меъёрию ҳуқуқии дар китоб истифода шуда',
-      intro: fallback.legalActsListIntro,
-      documents: fallback.legalDocumentsList
-          .map(
-            (d) => LegalDocumentModel(
-              id: d.number,
-              order: d.number,
-              title: d.title,
-              pdfUrl: d.remoteUrl,
-              assetPath: d.assetPath,
-              hasPdf: d.hasPdf,
-            ),
-          )
-          .toList(),
+      intro: '',
+      documents: const [],
     );
   }
 
@@ -110,12 +94,11 @@ class _LegalDocumentsListScreenState extends State<LegalDocumentsListScreen> {
   void _openDocument(LegalDocumentModel doc) {
     final remote = LegalDocumentsCache.normalizePdfUrl(doc.pdfUrl);
     final hasRemote = remote != null && remote.isNotEmpty;
-    final hasAsset = doc.assetPath != null && doc.assetPath!.isNotEmpty;
-    if (!doc.hasPdf || (!hasRemote && !hasAsset)) {
+    if (!doc.hasPdf || !hasRemote) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Барои ин сатр PDF ё ссылка дар админка сабт нашудааст.',
+            'Барои ин санад PDF ё ссылка дар админка сабт нашудааст.',
           ),
         ),
       );
@@ -127,8 +110,7 @@ class _LegalDocumentsListScreenState extends State<LegalDocumentsListScreen> {
         builder: (context) => DocumentPdfScreen(
           title: doc.title,
           documentId: doc.id,
-          remoteUrl: hasRemote ? remote : null,
-          assetPath: (!hasRemote && hasAsset) ? doc.assetPath : null,
+          remoteUrl: remote,
         ),
       ),
     );
@@ -188,7 +170,11 @@ class _LegalDocumentsListScreenState extends State<LegalDocumentsListScreen> {
           }
           if (page == null || page.documents.isEmpty) {
             return _buildMessage(
-              'Рӯйхат холӣ аст.\nДар админка → «Санадҳои меъёрию ҳуқуқӣ» сатрҳо илова кунед.',
+              _loadedFromCache
+                  ? 'Рӯйхат холӣ аст (кеш).\nБо интернет кушоед — аз админка нав мешавад.'
+                  : 'Рӯйхат холӣ аст.\n'
+                      'Дар админка → «Санадҳои ҳуқуқӣ» ҳамаи санадҳо ва PDF-ҳоро илова кунед, '
+                      'сипас барномаро бо интернет кушоед.',
               showRetry: true,
             );
           }
@@ -298,9 +284,7 @@ class _LegalDocumentsListScreenState extends State<LegalDocumentsListScreen> {
 
   Widget _buildListItem(LegalDocumentModel doc) {
     final remote = LegalDocumentsCache.normalizePdfUrl(doc.pdfUrl);
-    final isLink = doc.hasPdf &&
-        ((remote != null && remote.isNotEmpty) ||
-            (doc.assetPath != null && doc.assetPath!.isNotEmpty));
+    final isLink = doc.hasPdf && remote != null && remote.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: InkWell(
