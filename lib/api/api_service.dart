@@ -10,6 +10,7 @@ import '../models/book_model.dart';
 import '../models/legal_document_model.dart';
 import '../models/user_model.dart';
 import '../services/legal_documents_cache.dart';
+import '../services/push_notification_service.dart';
 
 class ApiService {
   // --- ТАНЗИМОТИ ASOSӢ ---
@@ -269,6 +270,9 @@ class ApiService {
         await box.put('device_id', deviceId);
         await box.put('login_date', DateTime.now().toIso8601String());
         await box.delete('is_guest');
+        Future.microtask(
+          () => PushNotificationService.instance.reregisterAfterLogin(),
+        );
         return {'success': true};
       }
 
@@ -316,6 +320,9 @@ class ApiService {
         print("✅ Token saved: $token");
         print("✅ Device ID saved: $deviceId");
         print("✅ Login date saved: ${DateTime.now()}");
+        Future.microtask(
+          () => PushNotificationService.instance.reregisterAfterLogin(),
+        );
         return {'success': true};
       } else if (response.statusCode == 403) {
         // Device restriction error
@@ -1349,25 +1356,30 @@ class ApiService {
     final beforeHistory = await fetchPaymentHistory();
     final beforePending = _countPendingTopUps(beforeHistory);
 
-    await refreshPendingPayments();
+    final refresh = await refreshPendingPayments();
+    final becameFromApi = refresh['became_success'];
+    final becameApiCount = becameFromApi is int
+        ? becameFromApi
+        : int.tryParse('$becameFromApi') ?? 0;
 
     for (final item in beforeHistory) {
       if (!_isPendingTopUp(item)) continue;
       final orderId = item['transaction_id']?.toString();
       if (orderId != null && orderId.isNotEmpty) {
-        await checkSmartpayStatus(orderId);
+        await checkPaymentStatus(orderId);
       }
     }
 
     final afterHistory = await fetchPaymentHistory();
     final afterPending = _countPendingTopUps(afterHistory);
     final userAfter = await getUserProfile();
+    final becameDiff = beforePending - afterPending;
 
     return {
       'success': true,
-      'balance': userAfter?.balance,
+      'balance': refresh['balance']?.toString() ?? userAfter?.balance,
       'history': afterHistory,
-      'became_success': beforePending - afterPending,
+      'became_success': becameApiCount > 0 ? becameApiCount : becameDiff,
       'pending_count': afterPending,
     };
   }
@@ -1439,9 +1451,10 @@ class ApiService {
     }
   }
 
-  // Оғози пардохт ба воситаи Alif Mobi
+  // Оғози пардохт ба воситаи Alif Банк (Корти Милли / web.alif.tj)
   static Future<Map<String, dynamic>> initAlifPayment(
     double amount, {
+    String? description,
     int? bookId,
   }) async {
     try {
@@ -1450,6 +1463,8 @@ class ApiService {
         headers: await _getHeaders(),
         body: jsonEncode({
           'amount': amount.toStringAsFixed(2),
+          if (description != null && description.isNotEmpty)
+            'description': description,
           if (bookId != null) 'book_id': bookId,
         }),
       );
@@ -1457,8 +1472,9 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         return {
-          'success': true,
-          'payment_url': data['payment_url'],
+          'success': data['success'] ?? true,
+          'payment_url': data['payment_url'] ?? data['payment_link'],
+          'payment_link': data['payment_link'] ?? data['payment_url'],
           'html_form': data['html_form'],
           'order_id': data['order_id'],
         };
@@ -1474,6 +1490,30 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>> checkAlifStatus(String orderId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/payment/alif/status/?order_id=$orderId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map,
+        );
+      }
+      return {'status': 'unknown'};
+    } catch (e) {
+      return {'status': 'unknown', 'error': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> checkPaymentStatus(String orderId) async {
+    if (orderId.toUpperCase().startsWith('ALF-')) {
+      return checkAlifStatus(orderId);
+    }
+    return checkSmartpayStatus(orderId);
+  }
+
   /// Баъди харид дар iOS (StoreKit) — тасдиқи JWS дар сервер.
   static Future<Map<String, dynamic>> confirmAppleIap({
     required int planId,
@@ -1483,6 +1523,46 @@ class ApiService {
       'plan_id': planId,
       'signed_transaction_info': signedTransactionInfo,
     });
+  }
+
+  /// Рӯйхати огоҳиҳои админ (inbox).
+  static Future<Map<String, dynamic>> fetchNotifications() async {
+    try {
+      final headers = await _getHeaders(auth: false);
+      final response = await http.get(
+        Uri.parse('$baseUrl/notifications/'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final results = data is Map ? (data['results'] as List? ?? []) : [];
+        return {'success': true, 'results': results};
+      }
+      return {'success': false, 'error': 'Огоҳиҳо бор нашуданд'};
+    } catch (e) {
+      return {'success': false, 'error': 'Пайвастшавӣ нест'};
+    }
+  }
+
+  /// Сабти FCM token (вақте Firebase фаъол аст).
+  static Future<Map<String, dynamic>> registerPushToken({
+    required String token,
+    String platform = 'android',
+  }) async {
+    try {
+      final headers = await _getHeaders(auth: true);
+      final response = await http.post(
+        Uri.parse('$baseUrl/push/register/'),
+        headers: headers,
+        body: jsonEncode({'token': token, 'platform': platform}),
+      );
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {'success': true};
+      }
+      return {'success': false};
+    } catch (_) {
+      return {'success': false};
+    }
   }
 
   // --- ФУНКСИЯИ УМУМӢ БАРОИ POST REQUESTS ---

@@ -225,3 +225,56 @@ class AboutPage(models.Model):
 
     def __str__(self):
         return self.title
+
+class PushNotification(models.Model):
+    """Огоҳиҳои push / inbox — аз админка фиристода мешаванд."""
+    title = models.CharField(max_length=200, verbose_name='Сарлавҳа')
+    body = models.TextField(verbose_name='Матн')
+    is_sent = models.BooleanField(default=False, verbose_name='Фиристода шуд')
+    sent_at = models.DateTimeField(null=True, blank=True, verbose_name='Вақти фиристодан')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Эҷод шуд')
+    fcm_success = models.PositiveIntegerField(default=0, verbose_name='FCM муваффақ')
+    fcm_failure = models.PositiveIntegerField(default=0, verbose_name='FCM номуваффақ')
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Огоҳӣ (Push)'
+        verbose_name_plural = 'Огоҳиҳо (Push)'
+
+    def __str__(self):
+        return self.title
+
+
+class DevicePushToken(models.Model):
+    """Токени FCM-и дастгоҳ барои push."""
+    PLATFORM_CHOICES = (
+        ('android', 'Android'),
+        ('ios', 'iOS'),
+        ('other', 'Дигар'),
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='push_tokens',
+        verbose_name='Корбар',
+    )
+    token = models.CharField(max_length=512, unique=True, verbose_name='FCM Token')
+    platform = models.CharField(
+        max_length=16,
+        choices=PLATFORM_CHOICES,
+        default='android',
+        verbose_name='Платформа',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Токени push'
+        verbose_name_plural = 'Токенҳои push'
+
+    def __str__(self):
+        who = self.user.phone if self.user_id and self.user else 'меҳмон'
+        return f'{who} ({self.platform})'
+

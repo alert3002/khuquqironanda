@@ -52,9 +52,27 @@
 
   <script>
     const params = new URLSearchParams(window.location.search);
-    if (params.get('success') === '1' && params.get('token')) {
-      document.body.innerHTML = '<p style="text-align:center;padding:24px;">Муваффақ! Бармегардонем…</p>';
+
+    async function notifyFlutter(payload) {
+      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+        await window.flutter_inappwebview.callHandler('telegramAuth', payload);
+        return true;
+      }
+      return false;
     }
+
+    (async function onSuccess() {
+      if (params.get('success') !== '1' || !params.get('token')) return;
+      const payload = {
+        token: params.get('token'),
+        user_id: params.get('user_id') || '',
+      };
+      if (await notifyFlutter(payload)) {
+        document.body.innerHTML = '<p style="text-align:center;padding:24px;">Муваффақ!</p>';
+        return;
+      }
+      document.body.innerHTML = '<p style="text-align:center;padding:24px;">Муваффақ! Бармегардонем…</p>';
+    })();
 
     const btn = document.getElementById('login-btn');
     if (btn) {

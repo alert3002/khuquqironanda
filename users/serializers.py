@@ -5,8 +5,7 @@ from books.models import SubscriptionPlan, Subscription
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
-    telegram_username = serializers.CharField(read_only=True)
-    login_label = serializers.SerializerMethodField()
+    login_label = serializers.CharField(read_only=True)
 
     class Meta:
         model = User
@@ -27,9 +26,6 @@ class UserSerializer(serializers.ModelSerializer):
             'telegram_username',
             'login_label',
         ]
-
-    def get_login_label(self, obj):
-        return obj.login_label or ''
 
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):

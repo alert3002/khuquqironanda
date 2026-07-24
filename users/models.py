@@ -28,7 +28,8 @@ class CustomUser(AbstractUser):
         blank=True,
         verbose_name='Рақами телефон',
     )
-    telegram_id = models.BigIntegerField(
+    telegram_id = models.CharField(
+        max_length=32,
         unique=True,
         null=True,
         blank=True,
@@ -57,25 +58,23 @@ class CustomUser(AbstractUser):
 
     objects = CustomUserManager()
 
-    def __str__(self):
-        if self.phone:
-            return self.phone
-        if self.telegram_username:
-            return f'@{self.telegram_username}'
-        if self.telegram_id:
-            return f'tg:{self.telegram_id}'
-        return f'user:{self.pk}'
-
     @property
-    def login_label(self):
-        """Барои профил дар барнома."""
+    def login_label(self) -> str:
+        """Барои профил: телефон ё @username."""
         if self.phone:
             return self.phone
-        if self.telegram_username:
-            return f'@{self.telegram_username}'
+        username = (self.telegram_username or '').strip().lstrip('@')
+        if username:
+            return f'@{username}'
+        name = f'{self.first_name or ""} {self.last_name or ""}'.strip()
+        if name:
+            return name
         if self.telegram_id:
-            return f'Telegram ID {self.telegram_id}'
-        return ''
+            return f'Telegram {self.telegram_id}'
+        return f'Корбар #{self.pk}'
+
+    def __str__(self):
+        return self.login_label
 
 
 class PhoneOTP(models.Model):

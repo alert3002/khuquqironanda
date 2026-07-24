@@ -16,7 +16,10 @@ from .models import (
     Transaction,
     AboutPage,
     LegalDocument,
+    PushNotification,
+    DevicePushToken,
 )
+from .push_service import dispatch_push_notification
 
 User = get_user_model()
 
@@ -28,10 +31,15 @@ class ChapterInline(admin.TabularInline):
 
 @admin.register(Book)
 class BookAdmin(admin.ModelAdmin):
-    list_display = ('title', 'price', 'created_at') # Дар рӯйхат чиро нишон диҳад
-    search_fields = ('title',) # Имкони ҷустуҷӯ
-    inlines = [ChapterInline] # Пайваст кардани бобҳо ба саҳифаи китоб
-    actions = ['activate_book_for_users'] # Action-ҳои иловагӣ
+    list_display = ('title', 'price', 'created_at')
+    search_fields = ('title',)
+    inlines = [ChapterInline]
+    actions = ['activate_book_for_users']
+    fieldsets = (
+        (None, {
+            'fields': ('title', 'description', 'cover_image', 'price'),
+        }),
+    )
     
     def activate_book_for_users(self, request, queryset):
         """
@@ -190,3 +198,64 @@ class LegalDocumentAdmin(admin.ModelAdmin):
                     'PDF дар сервер ёфт нашуд — лутфан файлро аз нав бор кунед.',
                     level=messages.WARNING,
                 )
+
+
+@admin.register(PushNotification)
+class PushNotificationAdmin(admin.ModelAdmin):
+    list_display = (
+        'title',
+        'is_sent',
+        'sent_at',
+        'fcm_success',
+        'fcm_failure',
+        'created_at',
+    )
+    list_filter = ('is_sent', 'created_at')
+    search_fields = ('title', 'body')
+    readonly_fields = ('is_sent', 'sent_at', 'fcm_success', 'fcm_failure', 'created_at')
+    actions = ['send_push_now']
+    fieldsets = (
+        (None, {
+            'fields': ('title', 'body'),
+            'description': (
+                'Огоҳиро эҷод кунед, сипас аз рӯйхат амалро «Фиристодан ҳозир» интихоб кунед. '
+                'Дар барнома дар қисми «Огоҳиҳо» пайдо мешавад. '
+                'Агар firebase-service-account.json гузошта шуда бошад, ба дастгоҳҳо FCM push меравад '
+                '(Legacy Server Key дигар лозим нест).'
+            ),
+        }),
+        ('Натиҷаи фиристодан', {
+            'fields': ('is_sent', 'sent_at', 'fcm_success', 'fcm_failure', 'created_at'),
+        }),
+    )
+
+    @admin.action(description='Фиристодан ҳозир (inbox + FCM)')
+    def send_push_now(self, request, queryset):
+        sent = 0
+        for n in queryset:
+            result = dispatch_push_notification(n)
+            sent += 1
+            self.message_user(
+                request,
+                (
+                    f'«{n.title}»: inbox ✓, токенҳо={result["tokens"]}, '
+                    f'FCM OK={result["fcm_success"]}, FCM fail={result["fcm_failure"]}'
+                ),
+                messages.SUCCESS,
+            )
+        if not sent:
+            self.message_user(request, 'Ҳеҷ огоҳӣ интихоб нашуд.', messages.WARNING)
+
+
+@admin.register(DevicePushToken)
+class DevicePushTokenAdmin(admin.ModelAdmin):
+    list_display = ('token_short', 'user', 'platform', 'updated_at')
+    list_filter = ('platform',)
+    search_fields = ('token', 'user__phone')
+    readonly_fields = ('created_at', 'updated_at')
+
+    def token_short(self, obj):
+        t = obj.token or ''
+        return f'{t[:24]}…' if len(t) > 24 else t
+
+    token_short.short_description = 'Token'

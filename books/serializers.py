@@ -12,6 +12,7 @@ from .models import (
     Transaction,
     AboutPage,
     LegalDocument,
+    PushNotification,
 )
 from .legal_docs import resolve_legal_document_path
 from .access import user_has_chapter_access as _user_has_chapter_access
@@ -119,7 +120,6 @@ class LegalDocumentSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if obj.pdf_file and obj.pdf_file.name:
             if resolve_legal_document_path(obj.pdf_file.name):
-                # Ссылкаи админка (/media/legal_documents/...) — дар сервер кор мекунад
                 rel_url = obj.pdf_file.url
                 if request is not None:
                     return request.build_absolute_uri(rel_url)
@@ -140,3 +140,10 @@ class LegalDocumentSerializer(serializers.ModelSerializer):
             except (ValueError, NotImplementedError):
                 return False
         return bool(obj.pdf_url and obj.pdf_url.strip())
+
+
+class PushNotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushNotification
+        fields = ['id', 'title', 'body', 'sent_at', 'created_at']
+

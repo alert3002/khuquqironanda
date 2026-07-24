@@ -1,0 +1,563 @@
+from django.shortcuts import render, get_object_or_404
+from rest_framework import viewsets
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.authentication import TokenAuthentication
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.contrib.auth import get_user_model
+from django.conf import settings
+from django.utils import timezone
+from django.db import transaction as db_transaction
+from decimal import Decimal
+import uuid
+from .models import (
+    Book,
+    Chapter,
+    PurchasedChapter,
+    Purchase,
+    SubscriptionPlan,
+    Subscription,
+    Transaction,
+)
+from .serializers import BookSerializer, TransactionSerializer
+from .services import generate_payment_xml, create_smartpay_invoice
+
+User = get_user_model()
+
+
+def _has_chapter_access(user, chapter):
+    if chapter.is_free:
+        return True
+    if PurchasedChapter.objects.filter(user=user, chapter=chapter).exists():
+        return True
+    if Purchase.objects.filter(user=user, book=chapter.book).exists():
+        return True
+    if chapter.is_premium:
+        return Subscription.objects.filter(
+            user=user,
+            expires_at__gt=timezone.now(),
+            plan__is_active=True,
+            plan__chapters=chapter,
+        ).exists()
+    return Subscription.objects.filter(
+        user=user,
+        expires_at__gt=timezone.now(),
+        plan__is_active=True,
+        plan__book=chapter.book,
+    ).exists()
+
+class BookViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Ин View танҳо барои хондан аст (ReadOnly).
+    Рӯйхати китобҳо ва бобҳоро нишон медиҳад.
+    """
+    queryset = Book.objects.all()
+    serializer_class = BookSerializer
+
+    def get_serializer_context(self):
+        """Илова кардани маълумоти корбар ба context"""
+        context = super().get_serializer_context()
+        if self.request.user.is_authenticated:
+            context['user'] = self.request.user
+        return context
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PurchaseChapterView(APIView):
+    """API барои харидани боб"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, chapter_id):
+        try:
+            chapter = Chapter.objects.get(id=chapter_id)
+        except Chapter.DoesNotExist:
+            return Response({'error': 'Боб ёфт нашуд'}, status=404)
+
+        # Агар боб ройгон бошад
+        if chapter.is_free:
+            return Response({'error': 'Ин боб ройгон аст'}, status=400)
+
+        # Санҷиш, оё аллакай харида шудааст
+        if PurchasedChapter.objects.filter(user=request.user, chapter=chapter).exists():
+            return Response({'error': 'Шумо ин бобро аллакай харидаед'}, status=400)
+
+        # Санҷиши баланс
+        chapter_price = Decimal(str(chapter.book.price))  # Нархи китоб = нархи боб
+        if request.user.balance < chapter_price:
+            return Response({
+                'error': 'Баланси шумо кофӣ нест',
+                'required': str(chapter_price),
+                'current_balance': str(request.user.balance)
+            }, status=400)
+
+        # Харидани боб
+        request.user.balance -= chapter_price
+        request.user.save()
+
+        # Сабти харид
+        purchase = PurchasedChapter.objects.create(
+            user=request.user,
+            chapter=chapter,
+            price_paid=chapter_price
+        )
+
+        return Response({
+            'message': 'Боб бомуваффақият харида шуд',
+            'purchase_id': purchase.id,
+            'new_balance': str(request.user.balance)
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CheckChapterAccessView(APIView):
+    """API барои санҷидани дастрасии боб"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, chapter_id):
+        try:
+            chapter = Chapter.objects.get(id=chapter_id)
+        except Chapter.DoesNotExist:
+            return Response({'error': 'Боб ёфт нашуд'}, status=404)
+
+        has_access = _has_chapter_access(request.user, chapter)
+
+        return Response({
+            'has_access': has_access,
+            'is_free': chapter.is_free,
+            'price': str(chapter.book.price)
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PurchaseSubscriptionView(APIView):
+    """API барои харидани обуна (бо интихоби нақша)"""
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        plan_id = request.data.get('plan_id')
+        if not plan_id:
+            return Response({'error': 'ID-и нақшаро (plan_id) ворид кунед'}, status=400)
+
+        plan = get_object_or_404(SubscriptionPlan, id=plan_id, is_active=True)
+        user = request.user
+
+        if user.balance < plan.price:
+            return Response({
+                'error': 'Маблағ кифоя нест',
+                'required': str(plan.price),
+                'current_balance': str(user.balance)
+            }, status=400)
+
+        current_subscription = Subscription.objects.filter(
+            user=user,
+            plan=plan,
+            expires_at__gt=timezone.now(),
+        ).order_by('-expires_at').first()
+
+        if current_subscription:
+            new_expires_at = current_subscription.expires_at + timezone.timedelta(days=plan.days)
+        else:
+            new_expires_at = timezone.now() + timezone.timedelta(days=plan.days)
+
+        try:
+            with db_transaction.atomic():
+                user.balance -= plan.price
+                user.save()
+
+                Subscription.objects.create(
+                    user=user,
+                    plan=plan,
+                    expires_at=new_expires_at,
+                )
+
+                Transaction.objects.create(
+                    user=user,
+                    amount=plan.price,
+                    status='SUCCESS',
+                    transaction_id=f"SUB-{uuid.uuid4().hex[:8].upper()}",
+                    description=f"Обуна: {plan.book.title} ({plan.name})"
+                )
+
+            return Response({
+                'message': 'Обуна бо муваффақият фаъол шуд!',
+                'new_balance': str(user.balance),
+                'expires_at': new_expires_at.strftime('%Y-%m-%d %H:%M:%S')
+            })
+        except Exception as e:
+            return Response({'error': f'Хатогӣ ҳангоми харид: {str(e)}'}, status=500)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class BuyBookView(APIView):
+    """API барои харидани китоб"""
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        book_id = request.data.get('book_id')
+        
+        if not book_id:
+            return Response({'error': 'ID-и китобро ворид кунед'}, status=400)
+        
+        try:
+            book = Book.objects.get(id=book_id)
+        except Book.DoesNotExist:
+            return Response({'error': 'Китоб ёфт нашуд'}, status=404)
+
+        # Санҷиш, оё аллакай харида шудааст
+        if Purchase.objects.filter(user=request.user, book=book).exists():
+            return Response({'error': 'Шумо ин китобро аллакай харидаед'}, status=400)
+
+        # Санҷиши баланс
+        book_price = Decimal(str(book.price))
+        if request.user.balance < book_price:
+            return Response({
+                'error': 'Маблағ кифоя нест',
+                'required': str(book_price),
+                'current_balance': str(request.user.balance)
+            }, status=400)
+
+        # Харидани китоб
+        request.user.balance -= book_price
+        request.user.save()
+
+        # Сабти харид
+        purchase = Purchase.objects.create(
+            user=request.user,
+            book=book
+        )
+
+        return Response({
+            'message': 'Китоб бомуваффақият харида шуд',
+            'purchase_id': purchase.id,
+            'new_balance': str(request.user.balance)
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class InitPaymentView(APIView):
+    """
+    API endpoint to initialize payment via Dushanbe City Payment Gateway
+    Accepts: amount (required)
+    Returns: payment_url and xml_data for Flutter WebView submission
+    """
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        amount = request.data.get('amount')
+        book_id = request.data.get('book_id')  # Optional: for book purchase
+        
+        if not amount:
+            return Response({'error': 'Маблағро ворид кунед'}, status=400)
+        
+        try:
+            amount_decimal = Decimal(str(amount))
+            if amount_decimal <= 0:
+                return Response({'error': 'Маблағ бояд мусбат бошад'}, status=400)
+        except (ValueError, TypeError):
+            return Response({'error': 'Маблағи нодуруст'}, status=400)
+        
+        # Generate unique order ID
+        order_id = str(uuid.uuid4())
+        
+        # Get user phone
+        phone = request.user.phone if hasattr(request.user, 'phone') else ''
+        
+        # Create description
+        if book_id:
+            try:
+                book = Book.objects.get(id=book_id)
+                description = f'Хариди китоб: {book.title}'
+            except Book.DoesNotExist:
+                description = f'Пур кардани баланси барномаи ҳуқуқи ронанда: {amount} сомонӣ'
+        else:
+            description = f'Пур кардани баланси барномаи ҳуқуқи ронанда: {amount} сомонӣ'
+        
+        # Generate payment XML
+        try:
+            xml_data = generate_payment_xml(
+                order_id=order_id,
+                amount=amount,
+                description=description,
+                phone=phone
+            )
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': 'Хатогӣ ҳангоми тайёр кардани пардохт',
+                'details': str(e),
+                'traceback': traceback.format_exc()
+            }, status=500)
+        
+        # Generate HTML form
+        try:
+            html_form = _generate_html_form(xml_data)
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': 'Хатогӣ ҳангоми тайёр кардани HTML форма',
+                'details': str(e),
+                'traceback': traceback.format_exc()
+            }, status=500)
+        
+        # Return payment URL and XML data
+        return Response({
+            'payment_url': settings.DC_PAYMENT_URL,
+            'xml_data': xml_data,
+            'order_id': order_id,
+            'amount': str(amount),
+            'description': description,
+            # HTML form for WebView (Flutter will use this)
+            'html_form': html_form
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class SmartPayInitView(APIView):
+    """
+    Initialize payment via SmartPay and return redirect HTML.
+    """
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        amount = request.data.get('amount')
+        description = request.data.get('description')
+
+        if not amount:
+            return Response({'error': 'Маблағро ворид кунед'}, status=400)
+
+        try:
+            amount_decimal = Decimal(str(amount))
+            if amount_decimal <= 0:
+                return Response({'error': 'Маблағ бояд мусбат бошад'}, status=400)
+        except (ValueError, TypeError):
+            return Response({'error': 'Маблағи нодуруст'}, status=400)
+
+        phone = request.user.phone if hasattr(request.user, 'phone') else ''
+        if not description:
+            description = f'Пур кардани баланси барномаи ҳуқуқи ронанда: {amount_decimal} сомонӣ'
+
+        try:
+            result = create_smartpay_invoice(
+                amount=amount_decimal,
+                description=description,
+                customer_phone=phone,
+                return_url=getattr(settings, 'SMARTPAY_RETURN_URL', ''),
+            )
+        except Exception as e:
+            return Response({'error': f'Хатогӣ ҳангоми SmartPay: {e}'}, status=500)
+
+        # Save pending transaction
+        Transaction.objects.create(
+            user=request.user,
+            amount=amount_decimal,
+            status='PENDING',
+            transaction_id=result['order_id'],
+            description=description,
+        )
+
+        payment_link = result['payment_link']
+        html_form = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="refresh" content="0;url={payment_link}">
+  <title>SmartPay</title>
+</head>
+<body>
+  <p>Интизор шавед... <a href="{payment_link}">Пардохт</a></p>
+</body>
+</html>"""
+
+        return Response({
+            'payment_link': payment_link,
+            'html_form': html_form,
+            'order_id': result['order_id'],
+        })
+
+
+def _generate_html_form(xml_data):
+    """
+    Generate HTML form that will POST XML data to payment gateway
+    This will be used in Flutter WebView
+    """
+    try:
+        payment_url = getattr(settings, 'DC_PAYMENT_URL', 'https://acquire.dushanbecity.tj/createOrder.jsp')
+    except:
+        payment_url = 'https://acquire.dushanbecity.tj/createOrder.jsp'
+    
+    # Escape XML for HTML attribute - replace quotes and special chars
+    # First escape & to avoid double escaping
+    escaped_xml = xml_data.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#39;')
+    
+    html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Пардохт</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: #f5f5f5;
+        }}
+        .container {{
+            text-align: center;
+            padding: 20px;
+        }}
+        .spinner {{
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }}
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
+    </style>
+</head>
+<body onload="document.forms['paymentForm'].submit();">
+    <div class="container">
+        <div class="spinner"></div>
+        <p>Интизор шавед, ба саҳифаи пардохт гузаронида мешавем...</p>
+    </div>
+    <form id="paymentForm" name="paymentForm" method="POST" action="{payment_url}">
+        <input type="hidden" name="xml" value="{escaped_xml}">
+        <noscript>
+            <div style="text-align: center; padding: 20px;">
+                <p>JavaScript фаъол нест. Лутфан тугмаи зеринро пахш кунед:</p>
+                <button type="submit" style="padding: 10px 20px; font-size: 16px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                    Пардохт кардан
+                </button>
+            </div>
+        </noscript>
+    </form>
+</body>
+</html>'''
+    return html
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PaymentSuccessView(APIView):
+    """
+    Callback endpoint for successful payment
+    DC will redirect here after successful payment
+    """
+    permission_classes = []  # No authentication required for callback
+    
+    def post(self, request):
+        # DC will send payment result data here
+        # You should verify the payment and update user balance
+        return Response({
+            'status': 'success',
+            'message': 'Пардохт бомуваффақият анҷом шуд'
+        })
+    
+    def get(self, request):
+        # Some gateways use GET for redirects
+        return Response({
+            'status': 'success',
+            'message': 'Пардохт бомуваффақият анҷом шуд'
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PaymentCancelView(APIView):
+    """
+    Callback endpoint for cancelled payment
+    """
+    permission_classes = []
+    
+    def post(self, request):
+        return Response({
+            'status': 'cancelled',
+            'message': 'Пардохт бекор карда шуд'
+        })
+    
+    def get(self, request):
+        return Response({
+            'status': 'cancelled',
+            'message': 'Пардохт бекор карда шуд'
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PaymentDeclineView(APIView):
+    """
+    Callback endpoint for declined payment
+    """
+    permission_classes = []
+    
+    def post(self, request):
+        return Response({
+            'status': 'declined',
+            'message': 'Пардохт рад карда шуд'
+        })
+    
+    def get(self, request):
+        return Response({
+            'status': 'declined',
+            'message': 'Пардохт рад карда шуд'
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class SmartPayWebhookView(APIView):
+    """
+    SmartPay webhook endpoint.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.headers.get('api_token') or request.headers.get('Api-Token') or ''
+        expected = getattr(settings, 'SMARTPAY_WEBHOOK_TOKEN', '')
+        if expected and token != expected:
+            return Response({'error': 'Unauthorized'}, status=401)
+
+        try:
+            data = request.data if isinstance(request.data, dict) else {}
+        except Exception:
+            data = {}
+
+        status = data.get('status')
+        order_id = data.get('order_id') or data.get('orderId')
+        if status == 'success' and order_id:
+            try:
+                txn = Transaction.objects.get(transaction_id=order_id)
+                if txn.status != 'SUCCESS':
+                    txn.status = 'SUCCESS'
+                    txn.save(update_fields=['status'])
+                    user = txn.user
+                    user.balance += txn.amount
+                    user.save(update_fields=['balance'])
+            except Transaction.DoesNotExist:
+                pass
+
+        return Response({'status': 'accepted'})
+
+
+class PaymentHistoryView(APIView):
+    """
+    Return payment history for current user.
+    """
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = Transaction.objects.filter(user=request.user).order_by('-created_at')
+        serializer = TransactionSerializer(qs, many=True)
+        return Response(serializer.data)

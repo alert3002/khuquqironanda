@@ -55,13 +55,17 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
 TELEGRAM_BOT_USERNAME = os.environ.get(
     'TELEGRAM_BOT_USERNAME', 'huquqironanda_bot',
 ).strip().lstrip('@')
-# OIDC Login (BotFather → Web Login → Client ID / Secret)
+# Telegram Login OIDC (oauth.telegram.org) — аз BotFather → Web Login
 TELEGRAM_CLIENT_ID = os.environ.get('TELEGRAM_CLIENT_ID', '').strip()
 TELEGRAM_CLIENT_SECRET = os.environ.get('TELEGRAM_CLIENT_SECRET', '').strip()
-# Deep link барои баргашт ба Flutter пас аз OAuth (1 қадам)
+TELEGRAM_OAUTH_REDIRECT_URI = os.environ.get(
+    'TELEGRAM_OAUTH_REDIRECT_URI',
+    'https://books.1week.tj/telegram-login/oauth/callback/',
+).strip()
+# Deep link барои барномаи Flutter (app=1): khuquqironanda://auth?token=...
 TELEGRAM_APP_CALLBACK_SCHEME = os.environ.get(
     'TELEGRAM_APP_CALLBACK_SCHEME', 'khuquqironanda',
-).strip()
+).strip().rstrip(':')
 
 OTP_EXPIRY_MINUTES = 5
 OTP_RATE_LIMIT_SECONDS = 60
@@ -70,6 +74,11 @@ DEMO_OTP_MAP = {
     '+992921234567': '3002',
 }
 APP_NAME = 'Ҳуқуқи ронанда'
+
+# iOS App Store (StoreKit / JWS bundleId санҷиш)
+APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.khuquqironanda.week')
+
+
 
 # iOS App Store (StoreKit / JWS bundleId санҷиш)
 APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.bookkhuquqronanda.week')
@@ -95,13 +104,34 @@ SMARTPAY_WEBHOOK_TOKEN = os.environ.get(
     '4eed94124c86b03b9cf772a32accc2ad094f69656abfa0ce1bdeb7f66c882f0',
 ).strip()
 
+# Alif Bank (Корти Милли) — аз плагини WooCommerce / alif.pro
+# Дар production: ALIF_KEY, ALIF_PASSWORD, PUBLIC_BASE_URL-ро дар .env гузоред
+PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL', 'https://books.1week.tj').strip().rstrip('/')
+ALIF_KEY = os.environ.get('ALIF_KEY', '775015').strip()
+ALIF_PASSWORD = os.environ.get('ALIF_PASSWORD', '').strip()
+ALIF_GATE = os.environ.get('ALIF_GATE', 'km').strip() or 'km'
+ALIF_WEB_URL = os.environ.get('ALIF_WEB_URL', 'https://web.alif.tj/').strip()
+
+# Firebase Cloud Messaging (HTTP v1 — Legacy Server Key дигар нест)
+# 1) Firebase Console → Project settings → Service accounts → Generate new private key
+# 2) файлро гузоред: firebase-service-account.json (дар решаи проект) ё роҳи дигар
+FIREBASE_CREDENTIALS_PATH = os.environ.get(
+    'FIREBASE_CREDENTIALS_PATH',
+    str(BASE_DIR / 'firebase-service-account.json'),
+).strip()
+# Агар холӣ бошад, project_id аз JSON хонда мешавад
+FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID', '').strip()
+# Legacy (дигар истифода намешавад, барои мутобиқат)
+FIREBASE_SERVER_KEY = os.environ.get('FIREBASE_SERVER_KEY', '').strip()
+FCM_SERVER_KEY = FIREBASE_SERVER_KEY
+
 # Dushanbe City Payment Gateway Settings
 DC_MERCHANT_ID = '10100002'
 DC_PASSWORD = '987003002a'  # Иваз кардани ин ба пароли ҳақиқии шумо
 DC_PAYMENT_URL = 'https://acquire.dushanbecity.tj/createOrder.jsp'
 # Барои callback URL-ҳо - дар production инро ба домени ҳақиқии шумо тағйир диҳед
 # Барои телефони ҳақиқӣ - IP-и локалии компютерро истифода мекунем
-DC_BASE_URL = 'http://192.168.0.101:8000'  # Дар production: 'https://yourdomain.com'
+DC_BASE_URL = os.environ.get('DC_BASE_URL', PUBLIC_BASE_URL).strip().rstrip('/')
 
 
 INSTALLED_APPS = [
@@ -132,6 +162,9 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'core.urls'
+
+# Мувофиқи DB-и мавҷуда (AutoField) — makemigrations ҳоло id-ҳоро иваз намекунад
+DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 
 TEMPLATES = [
     {

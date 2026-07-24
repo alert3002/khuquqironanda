@@ -1,9 +1,9 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    BookViewSet, 
-    PurchaseChapterView, 
-    CheckChapterAccessView, 
+    BookViewSet,
+    PurchaseChapterView,
+    CheckChapterAccessView,
     BuyBookView,
     PurchaseSubscriptionView,
     InitPaymentView,
@@ -19,6 +19,14 @@ from .views import (
     LegalDocumentsListView,
     LegalDocumentPdfView,
     AppleIAPConfirmView,
+    PushNotificationsListView,
+    RegisterPushTokenView,
+)
+from .alif_views import (
+    AlifInitView,
+    AlifCallbackView,
+    AlifReturnView,
+    AlifStatusView,
 )
 
 # Router автоматикӣ суроғаҳоро месозад (масалан /books/)
@@ -41,6 +49,11 @@ urlpatterns = [
         name='smartpay-refresh-pending',
     ),
     path('payment/smartpay/webhook/', SmartPayWebhookView.as_view(), name='smartpay-webhook'),
+    # Alif Bank (Корти Милли)
+    path('payment/alif/init/', AlifInitView.as_view(), name='alif-init'),
+    path('payment/alif/callback/', AlifCallbackView.as_view(), name='alif-callback'),
+    path('payment/alif/return/', AlifReturnView.as_view(), name='alif-return'),
+    path('payment/alif/status/', AlifStatusView.as_view(), name='alif-status'),
     path('payment/history/', PaymentHistoryView.as_view(), name='payment-history'),
     path('payment/success/', PaymentSuccessView.as_view(), name='payment-success'),
     path('payment/cancel/', PaymentCancelView.as_view(), name='payment-cancel'),
@@ -48,6 +61,8 @@ urlpatterns = [
     path('iap/apple/confirm/', AppleIAPConfirmView.as_view(), name='apple-iap-confirm'),
     path('about/', AboutPageView.as_view(), name='about-page'),
     path('books/about/', AboutPageView.as_view(), name='books-about-page'),
+    path('notifications/', PushNotificationsListView.as_view(), name='push-notifications'),
+    path('push/register/', RegisterPushTokenView.as_view(), name='push-register'),
     path('legal-documents/', LegalDocumentsListView.as_view(), name='legal-documents'),
     path(
         'legal-documents/<int:pk>/pdf/',

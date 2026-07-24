@@ -3,41 +3,14 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/home_screen.dart';
 import 'services/pending_topup_watcher.dart';
+import 'services/push_notification_service.dart';
+import 'services/screen_security_service.dart';
 import 'api/api_service.dart';
 import 'utils/pdf_js_assets.dart';
 
-// Security Service - барои идоракунии ҳимояи экран
-class SecurityService {
-  static const String _securityEnabledKey = 'screen_security_enabled';
-  
-  // Фаъол кардани ҳимояи экран (default: true)
-  static Future<void> enableScreenSecurity({bool enabled = true}) async {
-    try {
-      var box = Hive.box('settings');
-      await box.put(_securityEnabledKey, enabled);
-      print("✅ Screen security ${enabled ? 'enabled' : 'disabled'}");
-      
-      // NOTE: Агар баъдтар хоҳед ҳимояро фаъол/хомӯш кунед,
-      // беҳтарин роҳ Method Channel бо MainActivity.kt мебошад.
-    } catch (e) {
-      print("❌ Error setting security: $e");
-    }
-  }
-  
-  // Санҷидани, оё ҳимоя фаъол аст
-  static bool isScreenSecurityEnabled() {
-    try {
-      var box = Hive.box('settings');
-      return box.get(_securityEnabledKey, defaultValue: true);
-    } catch (e) {
-      return true; // Default: enabled
-    }
-  }
-}
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // 1. Омодасозии Hive (Базаи Офлайн)
   await Hive.initFlutter();
   await Hive.openBox('settings'); // Барои сабти Токен ва настройкаҳо
@@ -46,10 +19,7 @@ void main() async {
 
   Future.microtask(PdfJsAssets.ensureLoaded);
 
-  // 2. Хомӯш кардани ҳимояи экран (Allow screenshots)
-  await SecurityService.enableScreenSecurity(enabled: false);
-
-  // 3. Агар токен набошад, барнома ҳамчун "меҳмон" кушода мешавад,
+  // 2. Агар токен набошад, барнома ҳамчун "меҳмон" кушода мешавад,
   // то Play Console онро "холӣ" ҳисоб накунад.
   try {
     final box = Hive.box('settings');
@@ -62,6 +32,9 @@ void main() async {
   } catch (_) {}
 
   PendingTopUpWatcher.instance.init();
+
+  // Firebase Cloud Messaging (агар google-services / plist бошад)
+  Future.microtask(() => PushNotificationService.instance.init());
 
   Future.microtask(() async {
     await ApiService.warmOfflineCache();
@@ -81,7 +54,6 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
-        // Global text theme with fontSize 13
         textTheme: const TextTheme(
           bodyLarge: TextStyle(fontSize: 13),
           bodyMedium: TextStyle(fontSize: 13),
@@ -100,7 +72,6 @@ class MyApp extends StatelessWidget {
           labelSmall: TextStyle(fontSize: 13),
         ),
       ),
-      // Localization delegates for DatePicker and other Material widgets
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -109,9 +80,13 @@ class MyApp extends StatelessWidget {
       supportedLocales: const [
         Locale('en'),
         Locale('ru'),
-        Locale('tg'), // Tajik
+        Locale('tg'),
       ],
-      // Ҳамеша Home кушода мешавад; воридшавӣ аз Профил дастрас аст.
+      builder: (context, child) {
+        return ScreenCaptureGuard(
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const HomeScreen(),
     );
   }

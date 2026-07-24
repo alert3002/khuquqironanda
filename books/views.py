@@ -29,6 +29,8 @@ from .models import (
     Transaction,
     AboutPage,
     LegalDocument,
+    PushNotification,
+    DevicePushToken,
 )
 from .apple_iap import decode_apple_jws_payload
 from .legal_docs import resolve_legal_document_path, legal_document_filename
@@ -37,6 +39,7 @@ from .serializers import (
     TransactionSerializer,
     AboutPageSerializer,
     LegalDocumentSerializer,
+    PushNotificationSerializer,
 )
 from .services import generate_payment_xml, create_smartpay_invoice
 from .payment_utils import (
@@ -464,11 +467,22 @@ class SmartPayInitView(APIView):
 
 
 class SmartPayStatusView(APIView):
-    """Poll payment status by order_id (updated via SmartPay webhook)."""
+    """
+    Poll payment status by order_id.
+    Агар webhook дер шавад — аз SmartPay API мепурсад ва балансро пур мекунад.
+    """
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from books.payments.exceptions import SmartPayError
+        from books.payments.services.balance import (
+            credit_transaction_if_charged,
+            is_charged_status,
+            normalize_payment_status,
+        )
+        from books.payments.services.smartpay_service import SmartPayService
+
         order_id = request.query_params.get('order_id')
         smartpay_id = request.query_params.get('smartpay_id')
         if not order_id and not smartpay_id:
@@ -494,35 +508,113 @@ class SmartPayStatusView(APIView):
         if not txn:
             return Response({'status': 'unknown', 'order_id': order_id})
 
+        credited = False
+        if txn.status == 'PENDING':
+            try:
+                remote = SmartPayService().get_order_status(txn.transaction_id)
+                remote_status = remote.get('status')
+                if is_charged_status(remote_status):
+                    credited = bool(
+                        credit_transaction_if_charged(txn, status_hint=remote_status)
+                    )
+                    txn.refresh_from_db()
+                else:
+                    norm = normalize_payment_status(remote_status)
+                    if norm in {'FAILED', 'CANCELLED', 'CANCELED', 'DECLINED', 'EXPIRED'}:
+                        txn.status = 'FAILED'
+                        txn.save(update_fields=['status'])
+            except SmartPayError:
+                pass
+            except Exception:
+                pass
+
+        request.user.refresh_from_db()
         return Response({
             'status': txn.status,
             'order_id': txn.transaction_id,
             'amount': str(txn.amount),
+            'credited': credited,
+            'balance': str(request.user.balance),
         })
 
 
 class SmartPayRefreshPendingView(APIView):
     """
-    Refresh pending top-up statuses and current balance for the app «Навсозӣ» button.
-    Does not call SmartPay API — returns latest DB state after webhook processing.
+    Навсозии PENDING: аз SmartPay мепурсад ва балансро пур мекунад.
     """
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user = request.user
-        user.refresh_from_db()
+        from books.payments.exceptions import SmartPayError
+        from books.payments.services.balance import (
+            credit_transaction_if_charged,
+            is_charged_status,
+            normalize_payment_status,
+        )
+        from books.payments.services.smartpay_service import SmartPayService
 
-        pending_qs = Transaction.objects.filter(
-            user=user,
-            status='PENDING',
-        ).filter(
-            Q(description__icontains='Пур кардани баланс')
-            | Q(description__icontains='пур кардани баланс')
-        ).order_by('-created_at')
+        user = request.user
+        pending_qs = list(
+            Transaction.objects.filter(
+                user=user,
+                status='PENDING',
+            ).filter(
+                Q(description__icontains='Пур кардани баланс')
+                | Q(description__icontains='пур кардани баланс')
+            ).order_by('-created_at')[:20]
+        )
+
+        became_success = 0
+        service = None
+        try:
+            service = SmartPayService()
+        except Exception:
+            service = None
 
         items = []
         for txn in pending_qs:
+            # Alif (Корти Милли)
+            if str(txn.transaction_id).upper().startswith('ALF-') or '[alif]' in (
+                txn.description or ''
+            ).lower():
+                try:
+                    from books.alif_payment import (
+                        check_transaction_status as alif_check,
+                        is_failed_status as alif_failed,
+                        is_success_status as alif_ok,
+                    )
+                    remote = alif_check(txn.transaction_id)
+                    remote_status = remote.get('status')
+                    if alif_ok(remote_status):
+                        if apply_smartpay_success(txn):
+                            became_success += 1
+                        txn.refresh_from_db()
+                    elif alif_failed(remote_status):
+                        txn.status = 'FAILED'
+                        txn.save(update_fields=['status'])
+                except Exception:
+                    pass
+            elif service is not None:
+                try:
+                    remote = service.get_order_status(txn.transaction_id)
+                    remote_status = remote.get('status')
+                    if is_charged_status(remote_status):
+                        if credit_transaction_if_charged(txn, status_hint=remote_status):
+                            became_success += 1
+                        txn.refresh_from_db()
+                    else:
+                        norm = normalize_payment_status(remote_status)
+                        if norm in {
+                            'FAILED', 'CANCELLED', 'CANCELED', 'DECLINED', 'EXPIRED',
+                        }:
+                            txn.status = 'FAILED'
+                            txn.save(update_fields=['status'])
+                except SmartPayError:
+                    pass
+                except Exception:
+                    pass
+
             txn.refresh_from_db()
             sp_id = extract_smartpay_id_from_description(txn.description)
             items.append({
@@ -531,6 +623,10 @@ class SmartPayRefreshPendingView(APIView):
                 'status': txn.status,
                 'amount': str(txn.amount),
             })
+
+        # Танҳо PENDING-ҳои боқимонда
+        items = [i for i in items if i['status'] == 'PENDING']
+        user.refresh_from_db()
 
         success_count = Transaction.objects.filter(
             user=user,
@@ -544,6 +640,7 @@ class SmartPayRefreshPendingView(APIView):
             'balance': str(user.balance),
             'pending': items,
             'pending_count': len(items),
+            'became_success': became_success,
             'success_topups': success_count,
         })
 
@@ -908,6 +1005,36 @@ class AboutPageView(APIView):
             })
         serializer = AboutPageSerializer(about)
         return Response(serializer.data)
+
+
+class PushNotificationsListView(APIView):
+    """Рӯйхати огоҳиҳои фиристодашуда (inbox дар барнома)."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        qs = PushNotification.objects.filter(is_sent=True).order_by('-sent_at', '-created_at')[:50]
+        data = PushNotificationSerializer(qs, many=True).data
+        return Response({'results': data, 'count': len(data)})
+
+
+class RegisterPushTokenView(APIView):
+    """Сабти FCM token (вақте Firebase дар барнома фаъол аст)."""
+    permission_classes = [AllowAny]
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request):
+        token = (request.data.get('token') or '').strip()
+        platform = (request.data.get('platform') or 'android').strip().lower()
+        if platform not in ('android', 'ios', 'other'):
+            platform = 'other'
+        if not token or len(token) < 20:
+            return Response({'detail': 'token нодуруст'}, status=400)
+        user = request.user if request.user and request.user.is_authenticated else None
+        obj, _ = DevicePushToken.objects.update_or_create(
+            token=token,
+            defaults={'platform': platform, 'user': user},
+        )
+        return Response({'ok': True, 'id': obj.id})
 
 
 class LegalDocumentsListView(APIView):

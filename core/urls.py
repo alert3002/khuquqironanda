@@ -27,10 +27,29 @@ def serve_legal_document(request, path):
     )
 
 
+def serve_site_html(request, page):
+    """Саҳифаҳои HTML (politika, support) — барои App Store ва дастгирӣ."""
+    allowed = {
+        'politika.html': 'politika.html',
+        'support.html': 'support.html',
+    }
+    if page not in allowed:
+        raise Http404
+    disk_path = os.path.join(settings.BASE_DIR, allowed[page])
+    if not os.path.isfile(disk_path):
+        raise Http404(f'{page} нест')
+    return FileResponse(
+        open(disk_path, 'rb'),
+        content_type='text/html; charset=utf-8',
+    )
+
+
 urlpatterns = [
     path('telegram-login/', telegram_login_page, name='telegram-login'),
     path('telegram-login/oauth/start/', telegram_oauth_start, name='telegram-oauth-start'),
     path('telegram-login/oauth/callback/', telegram_oauth_callback, name='telegram-oauth-callback'),
+    re_path(r'^politika\.html/?$', serve_site_html, {'page': 'politika.html'}, name='politika'),
+    re_path(r'^support\.html/?$', serve_site_html, {'page': 'support.html'}, name='support'),
     path('admin/', admin.site.urls),
     path('ckeditor/', include('ckeditor_uploader.urls')),
     path('api/', include('books.urls')),

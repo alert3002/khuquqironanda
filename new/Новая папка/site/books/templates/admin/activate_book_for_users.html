@@ -1,0 +1,42 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static admin_modify %}
+
+{% block content %}
+<h1>Активатсияи китобҳо барои корбарон</h1>
+
+<p>Китобҳои интихобшуда:</p>
+<ul>
+    {% for book in books %}
+    <li><strong>{{ book.title }}</strong></li>
+    {% endfor %}
+</ul>
+
+<form method="post" action="">
+    {% csrf_token %}
+    
+    <h2>Интихоб кардани корбарон:</h2>
+    <div style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;">
+        {% for user in users %}
+        <div style="margin: 5px 0;">
+            <label>
+                <input type="checkbox" name="users" value="{{ user.id }}">
+                <strong>{{ user.phone }}</strong>
+                {% if user.balance %}
+                (Баланс: {{ user.balance }} сомонӣ)
+                {% endif %}
+            </label>
+        </div>
+        {% empty %}
+        <p>Корбаре нест.</p>
+        {% endfor %}
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <input type="hidden" name="action" value="activate_book_for_users">
+        <input type="submit" name="apply" value="Активатсия кардан" class="default" style="padding: 10px 20px; background: #417690; color: white; border: none; cursor: pointer;">
+        <a href="{% url 'admin:books_book_changelist' %}" style="margin-left: 10px; padding: 10px 20px; background: #ba2121; color: white; text-decoration: none; display: inline-block;">Бекор кардан</a>
+    </div>
+</form>
+
+{% endblock %}
+

@@ -15,6 +15,9 @@ import 'profile_screen.dart';
 import 'legal_documents_list_screen.dart';
 import 'document_pdf_screen.dart';
 import 'authors_screen.dart';
+import 'notifications_screen.dart';
+import '../utils/book_content_search.dart';
+import '../widgets/content_search_results.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -40,17 +43,41 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _offlineWithoutCache = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  List<ContentSearchHit> _searchHits = [];
+  Timer? _searchDebounce;
+  int _unreadNotifications = 0;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    unawaited(_loadUnreadNotifications());
+  }
+
+  Future<void> _loadUnreadNotifications() async {
+    final n = await countUnreadNotifications();
+    if (mounted) setState(() => _unreadNotifications = n);
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) return;
+      final q = value.trim();
+      setState(() {
+        _searchQuery = q;
+        _searchHits = (_book == null || q.isEmpty)
+            ? const []
+            : BookContentSearch.searchBook(_book!, q);
+      });
+    });
   }
 
   Future<void> _openTelegramContact() async {
@@ -480,7 +507,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openReader({int? chapterId}) {
+  void _openReader({
+    int? chapterId,
+    String? searchQuery,
+    String? focusSnippet,
+  }) {
     if (_book != null) {
       unawaited(ApiService.persistBookForOffline(_book!));
       Navigator.push(
@@ -489,10 +520,30 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (context) => BookReaderScreen(
             book: _book!,
             initialChapterId: chapterId,
+            initialSearchQuery: searchQuery,
+            focusSnippet: focusSnippet,
           ),
         ),
       );
     }
+  }
+
+  void _onSearchHitTap(ContentSearchHit hit) {
+    final chapter = _book!.chapters.firstWhere(
+      (c) => c.id == hit.chapterId,
+      orElse: () => _book!.chapters.first,
+    );
+    final bookUnlocked = _book?.isPurchased ?? false;
+    final isAccessible = chapter.isFree || chapter.isPurchased || bookUnlocked;
+    if (!isAccessible) {
+      _onChapterTap(chapter);
+      return;
+    }
+    _openReader(
+      chapterId: hit.chapterId,
+      searchQuery: hit.query,
+      focusSnippet: hit.snippet,
+    );
   }
 
   List<Chapter> get _sortedChapters {
@@ -502,11 +553,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return list;
   }
 
-  List<Chapter> get _filteredChapters {
-    if (_searchQuery.trim().isEmpty) return _sortedChapters;
-    final q = _searchQuery.trim().toLowerCase();
-    return _sortedChapters.where((c) => c.title.toLowerCase().contains(q)).toList();
-  }
+  bool get _isSearching => _searchQuery.trim().isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -552,21 +599,51 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             actions: [
               IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 icon: _isRefreshing
                     ? const SizedBox(
-                        width: 22,
-                        height: 22,
+                        width: 20,
+                        height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.refresh_rounded, color: _DashboardTheme.primary, size: 26),
+                    : const Icon(Icons.refresh_rounded, color: _DashboardTheme.primary, size: 24),
                 onPressed: _isRefreshing ? null : _refreshBook,
                 tooltip: "Навсозӣ",
               ),
               IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                icon: Badge(
+                  isLabelVisible: _unreadNotifications > 0,
+                  smallSize: 8,
+                  child: const Icon(
+                    Icons.notifications_outlined,
+                    color: _DashboardTheme.primary,
+                    size: 24,
+                  ),
+                ),
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const NotificationsScreen(),
+                    ),
+                  );
+                  if (mounted) unawaited(_loadUnreadNotifications());
+                },
+                tooltip: 'Огоҳиҳо',
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 icon: const Icon(
                   Icons.help_outline_rounded,
                   color: _DashboardTheme.primary,
-                  size: 26,
+                  size: 24,
                 ),
                 onPressed: () {
                   Navigator.push(
@@ -587,7 +664,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 tooltip: 'Чӣ тавр харидан',
               ),
               IconButton(
-                icon: const Icon(Icons.person_rounded, color: _DashboardTheme.primary, size: 26),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                icon: const Icon(Icons.person_rounded, color: _DashboardTheme.primary, size: 24),
                 onPressed: () {
                   if (!_hasAuthToken) {
                     Navigator.push(
@@ -602,7 +682,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 4),
             ],
           ),
         ),
@@ -610,28 +690,60 @@ class _HomeScreenState extends State<HomeScreen> {
             ? const Center(child: CircularProgressIndicator())
             : _book == null
                 ? _buildErrorState()
-                : RefreshIndicator(
-                    onRefresh: _refreshBook,
-                    child: SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                      child: Column(
+                : _isSearching
+                    ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _buildQuickSearch(),
-                          const SizedBox(height: 24),
-                          _buildSectionTitle('Бобҳо'),
-                          const SizedBox(height: 12),
-                          _buildChaptersList(),
-                          const SizedBox(height: 24),
-                          _buildSectionTitle('Категорияҳо'),
-                          const SizedBox(height: 12),
-                          _buildCategoryCards(),
-                          const SizedBox(height: 24),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                            child: _buildQuickSearch(),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+                            child: Text(
+                              _searchHits.isEmpty
+                                  ? 'Натиҷаҳо'
+                                  : 'Натиҷаҳо (${_searchHits.length})',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF1A237E),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: ContentSearchResults(
+                              hits: _searchHits,
+                              query: _searchQuery,
+                              onHitTap: _onSearchHitTap,
+                              accentColor: _DashboardTheme.primary,
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                            ),
+                          ),
                         ],
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _refreshBook,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildQuickSearch(),
+                              const SizedBox(height: 24),
+                              _buildSectionTitle('Бобҳо'),
+                              const SizedBox(height: 12),
+                              _buildChaptersList(),
+                              const SizedBox(height: 24),
+                              _buildSectionTitle('Категорияҳо'),
+                              const SizedBox(height: 12),
+                              _buildCategoryCards(),
+                              const SizedBox(height: 24),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
     );
   }
 
@@ -690,10 +802,23 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: TextField(
         controller: _searchController,
-        onChanged: (v) => setState(() => _searchQuery = v),
+        onChanged: _onSearchChanged,
         decoration: InputDecoration(
-          hintText: "Ҷустуҷӯ",
+          hintText: 'Ҷустуҷӯ',
           prefixIcon: const Icon(Icons.search_rounded, color: _DashboardTheme.primary),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear_rounded, color: Colors.black45),
+                  onPressed: () {
+                    _searchDebounce?.cancel();
+                    _searchController.clear();
+                    setState(() {
+                      _searchQuery = '';
+                      _searchHits = const [];
+                    });
+                  },
+                )
+              : null,
           border: InputBorder.none,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
@@ -781,7 +906,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildChaptersList() {
-    final chapters = _filteredChapters;
+    final chapters = _sortedChapters;
     if (chapters.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 24),
@@ -791,7 +916,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Icon(Icons.search_off_rounded, size: 48, color: Colors.grey[400]),
               const SizedBox(height: 12),
               Text(
-                _searchQuery.isEmpty ? "Бобҳо ёфт нашуд" : "Ҷустуҷӯӣ натиҷа надод",
+                'Бобҳо ёфт нашуд',
                 style: TextStyle(fontSize: 15, color: Colors.grey[600]),
               ),
             ],

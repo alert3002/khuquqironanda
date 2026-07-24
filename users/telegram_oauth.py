@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import requests
 from django.conf import settings
 from django.core.cache import cache
+from django.http import HttpResponseRedirect
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,45 @@ def oauth_configured() -> bool:
         get_telegram_client_id()
         and (getattr(settings, 'TELEGRAM_CLIENT_SECRET', '') or '').strip()
     )
+
+
+def app_auth_redirect_url(
+    *,
+    token: str,
+    user_id: int | str,
+    device_id: str = '',
+    **extra: str,
+) -> str:
+    """
+    Deep link барои Flutter (app=1): khuquqironanda://auth?token=...&user_id=...
+    """
+    scheme = (
+        getattr(settings, 'TELEGRAM_APP_CALLBACK_SCHEME', 'khuquqironanda')
+        or 'khuquqironanda'
+    ).strip().rstrip(':')
+    params: dict[str, str] = {
+        'token': token,
+        'user_id': str(user_id),
+    }
+    if device_id:
+        params['device_id'] = device_id
+    for key, value in extra.items():
+        if value is not None and value != '':
+            params[key] = str(value)
+    return f'{scheme}://auth?{urlencode(params)}'
+
+
+def app_scheme_redirect(url: str) -> HttpResponseRedirect:
+    """Redirect ба deep link (Django ба таври пешфарз custom scheme-ро қабул намекунад)."""
+    scheme = (
+        getattr(settings, 'TELEGRAM_APP_CALLBACK_SCHEME', 'khuquqironanda')
+        or 'khuquqironanda'
+    ).strip().rstrip(':')
+
+    class _AppRedirect(HttpResponseRedirect):
+        allowed_schemes = ['http', 'https', 'ftp', scheme]
+
+    return _AppRedirect(url)
 
 
 def _generate_pkce():
@@ -112,16 +152,18 @@ def decode_id_token(id_token: str) -> dict:
     )
 
 
-def app_auth_redirect_url(*, token: str = '', error: str = '') -> str:
-    """khuquqironanda://auth?token=... — барои баргашти якқадама ба барнома."""
-    scheme = (
-        getattr(settings, 'TELEGRAM_APP_CALLBACK_SCHEME', 'khuquqironanda') or 'khuquqironanda'
-    ).strip()
-    if token:
-        return f'{scheme}://auth?{urlencode({"token": token})}'
-    if error:
-        return f'{scheme}://auth?{urlencode({"error": error})}'
-    return f'{scheme}://auth'
+def parse_telegram_user_id(claims: dict) -> str | None:
+    """
+    ID-и корбари Telegram аз OIDC id_token.
+    Танҳо `sub` — `id` дар JWT метавонад рақами дохилии калон бошад (OverflowError дар SQLite).
+    """
+    raw = claims.get('sub')
+    if raw is None or raw == '':
+        return None
+    user_id = str(raw).strip()
+    if user_id.isdigit() and 1 <= len(user_id) <= 20:
+        return user_id
+    return None
 
 
 def pop_oauth_state(state: str) -> dict | None:

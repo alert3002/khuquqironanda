@@ -1,6 +1,7 @@
 import logging
 import random
 from datetime import timedelta
+from urllib.parse import urlencode
 
 from django.apps import apps
 from django.conf import settings
@@ -8,8 +9,9 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
-from urllib.parse import quote, urlencode
+from django.views.decorators.http import require_GET
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -19,13 +21,20 @@ from .models import PhoneOTP
 from .serializers import UserSerializer
 from .telegram_oauth import (
     app_auth_redirect_url,
+    app_scheme_redirect,
     build_authorization_url,
     decode_id_token,
     exchange_code_for_tokens,
     oauth_configured,
+    parse_telegram_user_id,
     pop_oauth_state,
 )
-from .utils import apply_telegram_profile, send_osonsms, verify_telegram_login
+from .utils import (
+    link_phone_login_to_telegram,
+    resolve_telegram_user,
+    send_osonsms,
+    verify_telegram_login,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -136,7 +145,8 @@ class VerifyCodeView(APIView):
         if otp_obj.code != code:
             return Response({'error': 'Код нодуруст аст'}, status=400)
 
-        user, _ = User.objects.get_or_create(phone=phone)
+        telegram_id = request.data.get('telegram_id')
+        user, _ = link_phone_login_to_telegram(phone, telegram_id=telegram_id)
         _save_device_id(user, request.data.get('device_id'))
 
         TokenModel = apps.get_model('authtoken', 'Token')
@@ -148,26 +158,25 @@ class VerifyCodeView(APIView):
 
 
 def telegram_login_page(request):
-    """Саҳифаи воридшавии Telegram (OIDC) барои WebView."""
-    error = request.GET.get('error', '')
+    """Саҳифаи воридшавӣ — Telegram OIDC (oauth.telegram.org)."""
     return render(
         request,
         'users/telegram_login.html',
         {
-            'bot_username': getattr(
-                settings, 'TELEGRAM_BOT_USERNAME', 'huquqironanda_bot',
-            ).strip().lstrip('@'),
             'oauth_ready': oauth_configured(),
-            'error': error,
+            'error': request.GET.get('error'),
         },
     )
 
 
+@require_GET
 def telegram_oauth_start(request):
-    """Оғози OIDC → redirect ба oauth.telegram.org."""
     if not oauth_configured():
-        return redirect('/telegram-login/?error=oauth_not_configured')
-    redirect_uri = request.build_absolute_uri('/telegram-login/oauth/callback/')
+        return redirect(
+            reverse('telegram-login')
+            + '?error=OAuth+танзим+нашудааст',
+        )
+    redirect_uri = getattr(settings, 'TELEGRAM_OAUTH_REDIRECT_URI', '').strip()
     device_id = request.GET.get('device_id', '')
     app_mode = request.GET.get('app') == '1'
     auth_url = build_authorization_url(
@@ -178,61 +187,66 @@ def telegram_oauth_start(request):
     return redirect(auth_url)
 
 
+@require_GET
 def telegram_oauth_callback(request):
-    """Callback аз Telegram OIDC."""
+    error = request.GET.get('error')
+    if error:
+        return redirect(
+            reverse('telegram-login') + f'?error={error}',
+        )
+
     code = request.GET.get('code')
     state = request.GET.get('state')
-    stored = pop_oauth_state(state or '') or {}
-    app_mode = bool(stored.get('app'))
+    oauth_ctx = pop_oauth_state(state or '')
+    if not code or not oauth_ctx:
+        return redirect(
+            reverse('telegram-login') + '?error=state+ё+code+нодуруст',
+        )
 
-    oauth_error = request.GET.get('error_description') or request.GET.get('error')
-    if oauth_error:
-        if app_mode:
-            return redirect(app_auth_redirect_url(error=str(oauth_error)[:200]))
-        return redirect(f'/telegram-login/?error={oauth_error}')
-
-    if not code or not stored:
-        if app_mode:
-            return redirect(app_auth_redirect_url(error='invalid_state'))
-        return redirect('/telegram-login/?error=invalid_state')
-
-    redirect_uri = request.build_absolute_uri('/telegram-login/oauth/callback/')
+    redirect_uri = getattr(settings, 'TELEGRAM_OAUTH_REDIRECT_URI', '').strip()
     try:
-        token_payload = exchange_code_for_tokens(
+        tokens = exchange_code_for_tokens(
             code=code,
-            verifier=stored['verifier'],
+            verifier=oauth_ctx['verifier'],
             redirect_uri=redirect_uri,
         )
-        claims = decode_id_token(token_payload['id_token'])
+        claims = decode_id_token(tokens['id_token'])
     except Exception as exc:
         logger.exception('Telegram OAuth callback failed')
-        err = str(exc)[:120]
-        if app_mode:
-            return redirect(app_auth_redirect_url(error=err))
-        return redirect(f'/telegram-login/?error={quote(err)}')
+        return redirect(
+            reverse('telegram-login') + f'?error={exc}',
+        )
 
-    try:
-        telegram_id = int(claims.get('id') or claims.get('sub'))
-    except (TypeError, ValueError):
-        if app_mode:
-            return redirect(app_auth_redirect_url(error='no_telegram_id'))
-        return redirect('/telegram-login/?error=no_telegram_id')
+    telegram_id = parse_telegram_user_id(claims)
+    if not telegram_id:
+        return redirect(
+            reverse('telegram-login') + '?error=telegram+id+нест',
+        )
 
-    user, _ = User.objects.update_or_create(
-        telegram_id=telegram_id,
-        defaults={'first_name': '', 'last_name': ''},
-    )
-    apply_telegram_profile(user, claims=claims)
-    _save_device_id(user, stored.get('device_id'))
+    user, _ = resolve_telegram_user(telegram_id, claims=claims)
+    _save_device_id(user, oauth_ctx.get('device_id'))
 
     TokenModel = apps.get_model('authtoken', 'Token')
     token, _ = TokenModel.objects.get_or_create(user=user)
 
-    if app_mode:
-        return redirect(app_auth_redirect_url(token=token.key))
+    if oauth_ctx.get('app'):
+        return app_scheme_redirect(
+            app_auth_redirect_url(
+                token=token.key,
+                user_id=user.id,
+                device_id=oauth_ctx.get('device_id') or '',
+            )
+        )
 
-    params = {'success': '1', 'token': token.key}
-    return redirect(f'/telegram-login/?{urlencode(params)}')
+    params = {
+        'success': '1',
+        'token': token.key,
+        'user_id': str(user.id),
+    }
+    if oauth_ctx.get('device_id'):
+        params['device_id'] = oauth_ctx['device_id']
+
+    return redirect(f"{reverse('telegram-login')}?{urlencode(params)}")
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -252,15 +266,11 @@ class TelegramLoginView(APIView):
             return Response({'error': 'Маълумоти Telegram нодуруст аст'}, status=400)
 
         try:
-            telegram_id = int(data['id'])
+            telegram_id = str(int(data['id']))
         except (KeyError, TypeError, ValueError):
             return Response({'error': 'id-и Telegram лозим аст'}, status=400)
 
-        user, created = User.objects.update_or_create(
-            telegram_id=telegram_id,
-            defaults={'first_name': '', 'last_name': ''},
-        )
-        apply_telegram_profile(user, widget_data=data)
+        user, created = resolve_telegram_user(telegram_id, widget_data=data)
         _save_device_id(user, request.data.get('device_id'))
 
         TokenModel = apps.get_model('authtoken', 'Token')
@@ -289,3 +299,6 @@ class UserProfileView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=400)
+    def delete(self, request):
+        request.user.delete()
+        return Response(status=204)

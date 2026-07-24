@@ -1,24 +1,25 @@
-"""Кӯмакгар барои JWS-и StoreKit 2 (transaction)."""
+"""
+Apple StoreKit 2 JWS — ҷудо кардани payload (бидуни санҷиши имзо).
+Дар production бояд тасдиқи расмӣ тавассути App Store Server API / санҷиши пурраи JWS иҷро шавад.
+"""
+
 from __future__ import annotations
 
 import base64
 import json
-from typing import Any
 
 
-def decode_apple_jws_payload(jws: str) -> dict[str, Any]:
+def decode_apple_jws_payload(jws: str) -> dict:
     """
-    Баровардани payload аз JWS бе санҷиши имзо.
-
-    Барои амнияти пурра дар production бояд App Store Server API ё санҷиши
-    имзои Apple истифода шавад; ин қадам барои ҳамоҳангӣ бо маҳсулот/нақша кофӣ аст.
+    Қисми дуюми JWS (payload)-ро аз base64url мечинонад ва JSON бармегардонад.
+    Имзо санҷида намешавад — дар production бояд App Store Server API / санҷиши JWS истифода шавад.
     """
-    if not jws or not isinstance(jws, str):
-        raise ValueError("signed_transaction_info холӣ аст")
-    parts = jws.split(".")
+    parts = jws.split('.')
     if len(parts) < 2:
-        raise ValueError("JWS нодуруст")
+        raise ValueError('JWS нодуруст аст: қисмҳои кофӣ нестанд')
     payload_b64 = parts[1]
-    padding = "=" * (-len(payload_b64) % 4)
-    raw = base64.urlsafe_b64decode(payload_b64 + padding)
-    return json.loads(raw.decode("utf-8"))
+    pad = (-len(payload_b64)) % 4
+    if pad:
+        payload_b64 += '=' * pad
+    raw = base64.urlsafe_b64decode(payload_b64)
+    return json.loads(raw.decode('utf-8'))

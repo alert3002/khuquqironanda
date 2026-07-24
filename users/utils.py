@@ -82,6 +82,7 @@ def send_osonsms(phone, code):
         }
 
     if response.status_code == 409:
+        # txn_id такрор — SMS дубора фиристода намешавад (қабул кардан ҳамчун муваффақият)
         return {
             'success': True,
             'error': None,
@@ -127,63 +128,11 @@ def _osonsms_error_message(parsed, raw_text, http_status):
     return 'Ирсоли SMS ноком шуд'
 
 
-def normalize_phone_number(raw: str) -> str:
-    """+992XXXXXXXXX ё холӣ."""
-    if not raw:
-        return ''
-    digits = ''.join(c for c in str(raw) if c.isdigit())
-    if not digits:
-        return ''
-    if digits.startswith('992') and len(digits) >= 12:
-        return f'+{digits[:12]}'
-    if len(digits) == 9:
-        return f'+992{digits}'
-    if raw.strip().startswith('+'):
-        return raw.strip().replace(' ', '')
-    return f'+{digits}' if digits else ''
-
-
-def apply_telegram_profile(user, *, claims=None, widget_data=None):
-    """
-    Маълумоти Telegram-ро дар профил сабт мекунад.
-    claims — JWT OIDC; widget_data — Login Widget hash payload.
-    """
-    updated_fields = []
-
-    if claims:
-        name = (claims.get('name') or '').strip()
-        if name:
-            parts = name.split(' ', 1)
-            user.first_name = parts[0]
-            user.last_name = parts[1] if len(parts) > 1 else ''
-            updated_fields.extend(['first_name', 'last_name'])
-        username = (claims.get('preferred_username') or '').strip().lstrip('@')
-        if username and user.telegram_username != username:
-            user.telegram_username = username
-            updated_fields.append('telegram_username')
-        phone = normalize_phone_number(claims.get('phone_number') or '')
-        if phone and user.phone != phone:
-            user.phone = phone
-            updated_fields.append('phone')
-
-    if widget_data:
-        if widget_data.get('first_name'):
-            user.first_name = widget_data.get('first_name') or ''
-            updated_fields.append('first_name')
-        if widget_data.get('last_name') is not None:
-            user.last_name = widget_data.get('last_name') or ''
-            updated_fields.append('last_name')
-        username = (widget_data.get('username') or '').strip().lstrip('@')
-        if username:
-            user.telegram_username = username
-            updated_fields.append('telegram_username')
-
-    if updated_fields:
-        user.save(update_fields=list(dict.fromkeys(updated_fields)))
-
-
 def verify_telegram_login(auth_data, bot_token):
-    """Тасдиқи Telegram Login Widget."""
+    """
+    Тасдиқи маълумоти Telegram Login Widget.
+    https://core.telegram.org/widgets/login#checking-authorization
+    """
     if not bot_token:
         return False
 
@@ -210,3 +159,176 @@ def verify_telegram_login(auth_data, bot_token):
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(calculated, check_hash)
+
+
+def normalize_phone_number(raw) -> str | None:
+    """Тоза кардани рақам ба формати +992..."""
+    if raw is None:
+        return None
+    s = str(raw).strip().replace(' ', '').replace('-', '')
+    if not s:
+        return None
+    if s.startswith('+'):
+        digits = ''.join(c for c in s[1:] if c.isdigit())
+        if not digits:
+            return None
+        return f'+{digits}'
+    digits = ''.join(c for c in s if c.isdigit())
+    if not digits:
+        return None
+    if digits.startswith('992'):
+        return f'+{digits}'
+    if len(digits) == 9:
+        return f'+992{digits}'
+    return f'+{digits}'
+
+
+def _telegram_username_from_payload(data: dict) -> str:
+    for key in ('preferred_username', 'username', 'telegram_username'):
+        val = data.get(key)
+        if val:
+            return str(val).strip().lstrip('@')[:64]
+    return ''
+
+
+def _phone_from_payload(data: dict):
+    for key in ('phone_number', 'phone', 'phone_number_verified'):
+        val = data.get(key)
+        if val:
+            return normalize_phone_number(val)
+    return None
+
+
+def _merge_telegram_payload(*, claims=None, widget_data=None) -> dict:
+    data = {}
+    if claims:
+        data.update(claims)
+    if widget_data:
+        data.update(widget_data)
+    return data
+
+
+def _merge_accounts_by_telegram(canonical, telegram_id: str):
+    """
+    Як ҳисоб барои як одам: телефон + Telegram.
+    Ҳисобҳои дубликати telegram_id-ро ба canonical пайваст/нест мекунад.
+    """
+    from decimal import Decimal
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    telegram_id = str(telegram_id).strip()
+    if not telegram_id:
+        return canonical
+
+    dupes = list(
+        User.objects.filter(telegram_id=telegram_id).exclude(pk=canonical.pk)
+    )
+    extra_balance = Decimal('0')
+    for dup in dupes:
+        extra_balance += dup.balance or Decimal('0')
+        dup.telegram_id = None
+        dup.save(update_fields=['telegram_id'])
+        if not dup.phone:
+            dup.delete()
+
+    update_fields = []
+    if canonical.telegram_id != telegram_id:
+        canonical.telegram_id = telegram_id
+        update_fields.append('telegram_id')
+    if extra_balance:
+        canonical.balance = (canonical.balance or Decimal('0')) + extra_balance
+        update_fields.append('balance')
+    if update_fields:
+        canonical.save(update_fields=update_fields)
+    return canonical
+
+
+def resolve_telegram_user(telegram_id: str, *, claims=None, widget_data=None):
+    """
+    Як аккаунт: агар телефон ва Telegram як одам бошанд — ҳамон корбар.
+    1) Ҳисоб бо phone (SMS) + telegram_id
+    2) Ҳисоб бо telegram_id (агар phone дар JWT набошад)
+    3) Эҷоди нав
+    """
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    data = _merge_telegram_payload(claims=claims, widget_data=widget_data)
+    phone = _phone_from_payload(data)
+    telegram_id = str(telegram_id).strip()
+
+    if phone:
+        by_phone = User.objects.filter(phone=phone).first()
+        if by_phone:
+            _merge_accounts_by_telegram(by_phone, telegram_id)
+            apply_telegram_profile(by_phone, claims=claims, widget_data=widget_data)
+            return by_phone, False
+
+    by_tg = User.objects.filter(telegram_id=telegram_id).first()
+    if by_tg:
+        apply_telegram_profile(by_tg, claims=claims, widget_data=widget_data)
+        if phone and not by_tg.phone:
+            if not User.objects.filter(phone=phone).exclude(pk=by_tg.pk).exists():
+                by_tg.phone = phone
+                by_tg.save(update_fields=['phone'])
+        return by_tg, False
+
+    user, created = User.objects.update_or_create(
+        telegram_id=telegram_id,
+        defaults={},
+    )
+    apply_telegram_profile(user, claims=claims, widget_data=widget_data)
+    return user, created
+
+
+def link_phone_login_to_telegram(phone: str, telegram_id: str | None = None):
+    """
+    Барои SMS verify: ҳисоб бо phone; агар telegram_id дода шавад — як аккаунт.
+    """
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    phone_key = str(phone).replace(' ', '')
+    user, created = User.objects.get_or_create(phone=phone_key)
+    if telegram_id:
+        _merge_accounts_by_telegram(user, str(telegram_id).strip())
+    return user, created
+
+
+def apply_telegram_profile(user, *, claims: dict | None = None, widget_data: dict | None = None):
+    """Навсозии профил аз OIDC claims ё маълумоти Login Widget."""
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    data = _merge_telegram_payload(claims=claims, widget_data=widget_data)
+
+    if not data:
+        return user
+
+    update_fields = []
+
+    username = _telegram_username_from_payload(data)
+    if username and user.telegram_username != username:
+        user.telegram_username = username
+        update_fields.append('telegram_username')
+
+    phone = _phone_from_payload(data)
+    if phone and not user.phone:
+        if not User.objects.filter(phone=phone).exclude(pk=user.pk).exists():
+            user.phone = phone
+            update_fields.append('phone')
+
+    first_name = (data.get('first_name') or data.get('given_name') or '').strip()
+    if first_name and user.first_name != first_name:
+        user.first_name = first_name[:150]
+        update_fields.append('first_name')
+
+    last_name = (data.get('last_name') or data.get('family_name') or '').strip()
+    if last_name and user.last_name != last_name:
+        user.last_name = last_name[:150]
+        update_fields.append('last_name')
+
+    if update_fields:
+        user.save(update_fields=update_fields)
+    return user

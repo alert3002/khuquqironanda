@@ -1,6 +1,11 @@
 from django.urls import path
 
-from .views import SendCodeView, VerifyCodeView, TelegramLoginView, UserProfileView
+from .views import (
+    SendCodeView,
+    TelegramLoginView,
+    UserProfileView,
+    VerifyCodeView,
+)
 
 urlpatterns = [
     path('send-code/', SendCodeView.as_view()),
