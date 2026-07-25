@@ -143,6 +143,52 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
     return amount;
   }
 
+  /// SmartPay ҳадди ақал 2 сомонӣ талаб мекунад.
+  static const double _minTopUpAmount = 2.0;
+
+  String _friendlyPaymentError(Object? raw) {
+    final text = raw?.toString() ?? '';
+    final lower = text.toLowerCase();
+    if (lower.contains('минимальн') ||
+        lower.contains('минимал') ||
+        (lower.contains('min') && lower.contains('2')) ||
+        lower.contains('2 сомон')) {
+      return 'Минималӣ $_minTopUpAmount сомонӣ ворид кунед';
+    }
+    // Агар JSON/dict пурра омада бошад — танҳо message-ро гиред
+    final msgMatch = RegExp(
+      r'''message['":\s]+['"]([^'"]+)''',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (msgMatch != null) {
+      final m = msgMatch.group(1) ?? '';
+      if (m.toLowerCase().contains('минимальн') || m.contains('2 сомон')) {
+        return 'Минималӣ $_minTopUpAmount сомонӣ ворид кунед';
+      }
+      if (m.length < 120) return m;
+    }
+    if (text.length > 160) {
+      return 'Пардохт оғоз нашуд. Маблағро санҷед ва боз кӯшиш кунед.';
+    }
+    return text.isEmpty ? 'Хатогӣ дар оғози пардохт' : text;
+  }
+
+  bool _ensureMinAmount(double amount) {
+    if (amount + 1e-9 < _minTopUpAmount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Минималӣ ${_minTopUpAmount.toStringAsFixed(0)} сомонӣ ворид кунед',
+          ),
+          backgroundColor: Colors.orange.shade800,
+        ),
+      );
+      return false;
+    }
+    return true;
+  }
+
+
   Future<void> _submitPayment() async {
     final amount = _parseAmount();
     if (amount == null) {
@@ -153,6 +199,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
       );
       return;
     }
+    if (!_ensureMinAmount(amount)) return;
 
     // Агар Alif интихоб шуда бошад → пардохти Alif Банк (Корти Милли)
     if (_useSmartPayWallets && _selectedBankId == 1) {
@@ -178,6 +225,7 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
       );
       return;
     }
+    if (!_ensureMinAmount(amount)) return;
     // Alif → web.alif.tj | SmartPay → саҳифаи SmartPay (ҳамаи бонкҳо)
     if (bank.isAlif) {
       await _startAlifPayment(amount);
@@ -206,7 +254,9 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              result['error']?.toString() ?? 'Хатогӣ дар оғози пардохти Alif',
+              _friendlyPaymentError(
+                result['error'] ?? 'Хатогӣ дар оғози пардохти Alif',
+              ),
             ),
             backgroundColor: Colors.red,
           ),
@@ -285,7 +335,11 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
       if (result['success'] != true) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result['error']?.toString() ?? 'Хатогӣ дар оғози пардохт'),
+            content: Text(
+              _friendlyPaymentError(
+                result['error'] ?? 'Хатогӣ дар оғози пардохт',
+              ),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -401,12 +455,17 @@ class _BalanceScreenState extends State<BalanceScreen> with WidgetsBindingObserv
   }
 
   Future<void> _openWebPayment(String paymentLink, {String? htmlForm}) async {
+    final isAlif = (htmlForm ?? '').toLowerCase().contains('alif') ||
+        paymentLink.toLowerCase().contains('alif');
     final paymentResult = await Navigator.push<PaymentResultStatus>(
       context,
       MaterialPageRoute(
         builder: (context) => PaymentWebView(
           htmlForm: htmlForm ?? '',
-          paymentUrl: htmlForm == null || htmlForm.isEmpty ? paymentLink : null,
+          paymentUrl: paymentLink.isNotEmpty ? paymentLink : null,
+          bottomHint: isAlif
+              ? 'Саҳифаи Alif Банк кушода мешавад. Баъди пардохт баланс автоматӣ нав мешавад.'
+              : 'Саҳифаи SmartPay кушода мешавад. Баъди пардохт баланс автоматӣ нав мешавад.',
         ),
       ),
     );

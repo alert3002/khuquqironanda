@@ -51,6 +51,8 @@
 	<string>Ин барнома барои функсияҳои аудиоӣ ба дастрасӣ ба микрофон ниёз дорад.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
 		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 		<key>NSExceptionDomains</key>
@@ -63,6 +65,20 @@
 				<true/>
 				<key>NSExceptionMinimumTLSVersion</key>
 				<string>TLSv1.0</string>
+			</dict>
+			<key>alif.tj</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>smartpay.tj</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
 			</dict>
 		</dict>
 	</dict>

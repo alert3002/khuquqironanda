@@ -121,13 +121,23 @@ def create_smartpay_invoice(
     Create SmartPay invoice and return payment link + raw response.
     When deeplink_bank_id is set, SmartPay returns deeplink_url for white-label.
     """
+    from decimal import Decimal
+
+    try:
+        amount_decimal = Decimal(str(amount))
+    except Exception as exc:
+        raise ValueError('Маблағи нодуруст') from exc
+
+    if amount_decimal < Decimal('2'):
+        raise ValueError('Минималӣ 2 сомонӣ ворид кунед')
+
     api_url = settings.SMARTPAY_API_URL
     api_token = settings.SMARTPAY_API_TOKEN
     order_id = order_id or f"ID-{int(time.time())}"
 
     payload = {
         "order_id": order_id,
-        "amount": float(amount),
+        "amount": float(amount_decimal),
         "currency": "TJS",
         "description": description,
         "customer_phone": customer_phone,
@@ -149,12 +159,23 @@ def create_smartpay_invoice(
     except Exception:
         pass
 
-    if response.status_code not in (200, 201):
-        raise ValueError(data or {"error": response.text})
+    if not isinstance(data, dict):
+        data = {"raw": data}
+
+    result_code = data.get("result")
+    message = str(data.get("message") or "")
+    message_l = message.lower()
+
+    if result_code not in (None, 200, "200") or response.status_code not in (200, 201):
+        if "минимальн" in message_l or "2 сомон" in message_l:
+            raise ValueError("Минималӣ 2 сомонӣ ворид кунед")
+        raise ValueError(message or f"Хатогӣ аз SmartPay ({response.status_code})")
 
     payment_link = data.get("payment_link")
     if not payment_link:
-        raise ValueError(data or {"error": "payment_link not found"})
+        if "минимальн" in message_l or "2 сомон" in message_l:
+            raise ValueError("Минималӣ 2 сомонӣ ворид кунед")
+        raise ValueError(message or "Пайванди пардохт аз SmartPay наомад")
 
     raw_smartpay_id = data.get("smartpay_id") or data.get("smartpayId")
     smartpay_id = raw_smartpay_id

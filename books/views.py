@@ -387,6 +387,11 @@ class SmartPayInitView(APIView):
             amount_decimal = Decimal(str(amount))
             if amount_decimal <= 0:
                 return Response({'error': 'Маблағ бояд мусбат бошад'}, status=400)
+            if amount_decimal < Decimal('2'):
+                return Response(
+                    {'error': 'Минималӣ 2 сомонӣ ворид кунед'},
+                    status=400,
+                )
         except (ValueError, TypeError):
             return Response({'error': 'Маблағи нодуруст'}, status=400)
 
@@ -421,8 +426,13 @@ class SmartPayInitView(APIView):
                 order_id=order_id,
                 deeplink_bank_id=deeplink_bank_id,
             )
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
         except Exception as e:
-            return Response({'error': f'Хатогӣ ҳангоми SmartPay: {e}'}, status=500)
+            return Response(
+                {'error': 'Хатогӣ ҳангоми SmartPay. Лутфан дертар кӯшиш кунед.'},
+                status=500,
+            )
 
         # Save pending transaction (merchant order_id + SmartPay dashboard id for webhook)
         extra_parts = []
