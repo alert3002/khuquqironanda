@@ -35,7 +35,7 @@ workflows:
           # Build number бояд аз охирин App Store Connect калонтар бошад
           flutter build ipa --release \
             --build-name=2.1.9 \
-            --build-number=37 \
+            --build-number=38 \
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - app/build/ios/ipa/*.ipa
