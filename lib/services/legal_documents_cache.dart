@@ -127,12 +127,23 @@ class LegalDocumentsCache {
     }
   }
 
+  /// PDF-ҳои аллакай кешшударо дар пасзамина «гарм» мекунад (барои офлайн).
+  static void warmAllPdfMemory(List<LegalDocumentModel> documents) {
+    Future.microtask(() async {
+      for (final doc in documents) {
+        if (!doc.hasPdf || doc.id <= 0) continue;
+        await getCachedPdfBytes(doc.id);
+      }
+    });
+  }
+
   /// Пас аз боркунии рӯйхат — ҳамаи PDF-ҳоро дар пасзамина захира мекунад.
   static void prefetchAll(
     List<LegalDocumentModel> documents,
     String? Function(String? url) normalizeUrl,
   ) {
     Future.microtask(() async {
+      warmAllPdfMemory(documents);
       for (final doc in documents) {
         if (!doc.hasPdf || doc.id <= 0) continue;
         final url = normalizeUrl(doc.pdfUrl);
