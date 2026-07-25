@@ -1,21 +1,47 @@
+# Codemagic — танҳо вақте кор мекунад, ки дар UI ба «codemagic.yaml» гузаред
+# Docs: https://docs.codemagic.io/yaml-quick-start/building-a-flutter-app/
+
 workflows:
-  ios-release:
-    name: iOS App Store (app/)
+  ios-app-store:
+    name: iOS App Store (from app/)
     max_build_duration: 60
     instance_type: mac_mini_m2
+    integrations:
+      # Номи App Store Connect integration дар Codemagic (Teams → Integrations)
+      app_store_connect: codemagic
     environment:
       flutter: stable
       xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.bookkhuquqronanda.week
+      vars:
+        # Агар integration ном дигар бошад, дар Codemagic UI иваз кунед
+        APP_STORE_ID: "6758546778"
     scripts:
-      - name: Build IPA from app/ (NOT repo root)
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
+      - name: Get Flutter packages
         script: |
           set -e
           cd app
           flutter pub get
-          # Build number must be > last App Store Connect upload (was 32)
-          flutter build ipa --release --build-name=2.1.9 --build-number=37
+      - name: Flutter build IPA
+        script: |
+          set -e
+          cd app
+          # Build number бояд аз охирин App Store Connect калонтар бошад
+          flutter build ipa --release \
+            --build-name=2.1.9 \
+            --build-number=37 \
+            --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - app/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
     publishing:
       app_store_connect:
         auth: integration
+        submit_to_testflight: false
+        # submit_to_app_store: false
